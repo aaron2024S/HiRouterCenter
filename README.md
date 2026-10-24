@@ -396,7 +396,7 @@ RULES=[{"name":"NAS","port":16669,"mac":"00:11:22:AA:BB:CC"},
 
 ```
 ipv6sync/offline/dist/
-├── ipv6sync-1.1.1-amd64-image.tar     51.4 MB   x86_64 NAS（唯一产物）
+├── ipv6sync-1.1.2-amd64-image.tar     51.4 MB   x86_64 NAS（唯一产物）
 ├── docker-compose.offline.yml          无 build 段的 compose
 ├── .env.example                        环境变量模板
 ├── SHA256SUMS.txt                      tar 的 sha256
@@ -407,7 +407,7 @@ NAS 上只需要四步：
 
 ```bash
 uname -m                                    # 应该是 x86_64
-docker load -i ipv6sync-1.1.1-amd64-image.tar
+docker load -i ipv6sync-1.1.2-amd64-image.tar
 mkdir -p data && sudo chown -R 10001:10001 data
 docker compose -f docker-compose.offline.yml up -d   # 先在 yaml 的 environment 里改 ADMIN_PASSWORD
 ```
@@ -550,6 +550,26 @@ python -m unittest discover -s tests -t . -v
 ---
 
 ## 变更记录
+
+### 1.1.2
+- **修设备名与路由器页面不一致**：原来优先取 `HostName`（设备自己上报的 DHCP 主机名），
+  应该取 `ActualName`（你在路由器上手动改的名字）。后果是手动改的「华为畅享 50z」显示成
+  `????_50z`（设备上报时非 ASCII 编码不了），「荣耀畅玩30 Plus」显示成设备自报的机型
+  「荣耀X30 Max」。固件前端（`friendlyName` / 白名单选址等四处）都是
+  `ActualName || HostName || MAC`，现在按同样的顺序取。
+- **设备列表列出全部 IPv6，点地址即复制**：原先用逗号挤在一行；现在一行一个，第一条
+  加粗（同步写白名单用的就是它），点一下复制到剪贴板。
+  复制同时兼容 `http://` 访问（`navigator.clipboard` 只在 https/localhost 可用，
+  否则自动退回 `execCommand`）—— NAS 用 IP 访问也能复制。
+  取址也更宽容：`Ipv6Addrs` 里的键名（`Ipv6Addr` / `IPv6Address` / `Addr`）都认，
+  `IPv6Address` 单字段若塞了多个地址会拆开；**顺序严格保留**，同步仍只写第一条。
+- **计划任务表固定列宽**：桌面端表格恒等于容器宽，「上次结果」在格内折行，
+  长消息不会再顶出横向滚动条。
+- **界面上不再出现任何内部参数**：重拨成功不再回显连接 ID（`InternetGatewayDevice...`），
+  执行异常统一显示「路由器没有按预期回应 / 登录已失效，请重新登录」这类人话，
+  不再把异常类名和原始响应写到界面上；诊断细节只进容器日志。
+- 计划任务「已错过」的提示去掉「未补跑」三个字。
+- 单测 **244 项**。
 
 ### 1.1.1
 - **修「重新拨号」报「读不到当前 WAN 连接 ID」**：原来只认 `ID/Id/id` 且值必须形如
