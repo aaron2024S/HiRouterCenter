@@ -510,6 +510,14 @@ html[data-theme="light"] .tpick-mask{background:rgba(30,34,56,.34)}
 .shell.collapsed .sidebar .navg{display:none}
 .shell.collapsed #btnCollapse svg{transform:rotate(180deg)}
 
+/* 登录门「保持登录（7 天）」 */
+.ckrow{display:flex;align-items:center;gap:8px;font-size:12.5px;
+  color:var(--text-3);cursor:pointer;user-select:none}
+.ckrow input{width:15px;height:15px;margin:0;accent-color:var(--accent);cursor:pointer}
+.ckrow:hover{color:var(--text-2)}
+/* 关于页「维护」 */
+.maint-row{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+
 /* 手机端筛选行：五个标签不再折成三行，横向滑动即可，避免「儿童上网」独占一行 */
 @media(max-width:640px){
   .filterrow .chips{flex-wrap:nowrap;overflow-x:auto;scrollbar-width:none;flex:1 1 auto;min-width:0}
@@ -809,6 +817,11 @@ html[data-theme="light"] .tpick-mask{background:rgba(30,34,56,.34)}
   <path d="M9.7 9.5a2.4 2.4 0 0 1 4.6.7c0 1.7-2.3 2-2.3 3.7"/>
   <circle cx="12" cy="17" r="1.1" class="f"/>
 </symbol>
+
+<symbol id="i-auto" viewBox="0 0 24 24">
+  <circle cx="12" cy="12" r="9"/>
+  <path class="f" d="M12 3a9 9 0 0 1 0 18Z"/>
+</symbol>
 </defs></svg>
 
 <div class="gate hide" id="gate">
@@ -821,6 +834,8 @@ html[data-theme="light"] .tpick-mask{background:rgba(30,34,56,.34)}
     <label class="efld"><span>密码</span>
       <input class="inp" id="lgPass" name="password" type="password"
         autocomplete="current-password" placeholder="控制台密码"></label>
+    <label class="ckrow"><input type="checkbox" id="lgRemember">
+      <span>保持登录（7 天）</span></label>
     <button class="btn btn-primary" id="lgBtn" type="submit">登录</button>
     <div class="gerr" id="lgErr"></div>
   </form>
@@ -1226,6 +1241,17 @@ html[data-theme="light"] .tpick-mask{background:rgba(30,34,56,.34)}
         </div>
 
         <div class="card">
+          <div class="ch"><svg class="i"><use href="#i-history"/></svg><span>维护</span>
+            <span class="hint">累计写入次数跨容器重启保存，只在需要时清零</span></div>
+          <div class="cb">
+            <div class="maint-row">
+              <button class="btn" id="btnResetCounters">重置累计写入</button>
+              <span class="hint" id="countersTxt">—</span>
+            </div>
+          </div>
+        </div>
+
+        <div class="card">
           <div class="ch"><svg class="i"><use href="#i-alert"/></svg><span>诊断信息</span>
             <span class="hint">排障时把这段发出来即可定位问题</span>
             <button class="btn btn-sm" id="btnCopyDiag" style="margin-left:8px">复制</button></div>
@@ -1324,6 +1350,7 @@ function showGate() {
 }
 function hideGate() { $('#gate').classList.add('hide'); }
 
+try { localStorage.removeItem('ipv6sync-remember'); } catch (e) { }
 $('#lgForm').addEventListener('submit', async e => {
   e.preventDefault();
   const btn = $('#lgBtn'), err = $('#lgErr');
@@ -1333,7 +1360,13 @@ $('#lgForm').addEventListener('submit', async e => {
     const r = await fetch('/api/login', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ user: $('#lgUser').value, password: $('#lgPass').value }),
+      body: JSON.stringify({
+        user: $('#lgUser').value,
+        password: $('#lgPass').value,
+        // 勾了「保持登录（7 天）」由后端签发 7 天有效期的 HttpOnly Cookie；
+        // 浏览器本地不保存任何密码明文（顺手清掉旧版本遗留的明文记录）
+        remember: !!$('#lgRemember').checked,
+      }),
     });
     const j = await r.json().catch(() => ({}));
     if (r.ok && j.ok) {
@@ -2678,6 +2711,7 @@ function renderAbout() {
     .find(f => f.key === 'POLL_INTERVAL');
   if (setv) diag.poll_interval = Number(setv.value) || null;
   $('#diagPre').textContent = JSON.stringify(diag, null, 2);
+  $('#countersTxt').textContent = '当前累计写入 ' + (s.total_writes || 0) + ' 次';
 }
 $('#btnCopyDiag').addEventListener('click', () => {
   const t = $('#diagPre').textContent;
@@ -2688,6 +2722,20 @@ $('#btnCopyImage').addEventListener('click', () => {
   const img = 'aaron2024s/ipv6sync:latest';
   if (copyText(img)) toast('镜像名已复制', 'docker pull ' + img, 'check');
   else toast('复制失败', '手动选中复制', 'alert');
+});
+$('#btnResetCounters').addEventListener('click', async () => {
+  const btn = $('#btnResetCounters');
+  btn.disabled = true;
+  try {
+    const j = await api('/api/counters/reset', {});
+    if (j && j.ok === false) throw new Error(j.error || '失败');
+    toast('累计写入已清零', '只影响统计数字，白名单不受影响', 'check');
+    const st = await api('/api/state').catch(() => null);
+    if (st) S.state = st;
+    renderAbout();
+  } catch (e) {
+    toast('重置失败', '请稍后再试', 'alert');
+  } finally { btn.disabled = false; }
 });
 
 /* ==========================================================================
@@ -2718,21 +2766,35 @@ $$('.ni[data-page]').forEach(b => b.addEventListener('click', () => {
   const fn = PAGE_LOAD[p];
   if (fn) Promise.resolve(fn()).catch(() => {});
 }));
+/* 主题三态：跟随系统 → 深色 → 浅色 → 跟随系统，选择记忆在浏览器本地。
+   「跟随系统」时按 prefers-color-scheme 落到具体的深色/浅色，
+   并且系统自己改了深浅也会跟着变（不用刷新）。 */
+const THEME_KEY = 'hrc-theme';
+const THEMES = [['auto', 'auto', '跟随系统'], ['dark', 'moon', '深色'], ['light', 'sun', '浅色']];
+const THEME_NEXT = { auto: 'dark', dark: 'light', light: 'auto' };
+const mqDark = window.matchMedia('(prefers-color-scheme: dark)');
+function themeChoice() {
+  try { return localStorage.getItem(THEME_KEY) || 'auto'; } catch (e) { return 'auto'; }
+}
+function applyTheme(choice) {
+  const t = THEMES.find(x => x[0] === choice) ? choice : 'auto';
+  const real = t === 'auto' ? (mqDark.matches ? 'dark' : 'light') : t;
+  document.documentElement.dataset.theme = real;
+  const [, icon, label] = THEMES.find(x => x[0] === t);
+  const btn = $('#themeBtn');
+  btn.innerHTML = '<svg class="i"><use href="#i-' + icon + '"/></svg>'
+    + '<span class="tlabel">' + label + '</span>';
+  btn.title = '切换界面主题：跟随系统 → 深色 → 浅色（当前 ' + label + '）';
+}
 $('#themeBtn').addEventListener('click', () => {
-  const root = document.documentElement;
-  const dark = root.dataset.theme !== 'light';
-  root.dataset.theme = dark ? 'light' : 'dark';
-  $('#themeBtn').innerHTML = '<svg class="i"><use href="#i-' + (dark ? 'sun' : 'moon') + '"/></svg>'
-    + '<span class="tlabel">' + (dark ? '浅色' : '深色') + '</span>';
-  try { localStorage.setItem('hrc-theme', root.dataset.theme); } catch (e) { }
+  const next = THEME_NEXT[themeChoice()] || 'auto';
+  try { localStorage.setItem(THEME_KEY, next); } catch (e) { }
+  applyTheme(next);
 });
-(function initTheme() {
-  let t = 'dark';
-  try { t = localStorage.getItem('hrc-theme') || 'dark'; } catch (e) { }
-  document.documentElement.dataset.theme = t;
-  $('#themeBtn').innerHTML = '<svg class="i"><use href="#i-' + (t === 'dark' ? 'moon' : 'sun')
-    + '"/></svg><span class="tlabel">' + (t === 'dark' ? '深色' : '浅色') + '</span>';
-})();
+const onSysTheme = () => { if (themeChoice() === 'auto') applyTheme('auto'); };
+if (mqDark.addEventListener) mqDark.addEventListener('change', onSysTheme);
+else if (mqDark.addListener) mqDark.addListener(onSysTheme);
+applyTheme(themeChoice());
 /* 移动端侧栏抽屉 */
 let scrim = null;
 const shell = document.querySelector('.shell');
