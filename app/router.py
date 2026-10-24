@@ -49,6 +49,11 @@ API = {
     "ipv6_lan": "ntwk/ipv6_lan",
     "ipv6_wan": "ntwk/ipv6_wan",
     "lan_host": "ntwk/lan_host",
+    # 计划任务用到的四个「立即执行」接口（全部逆向自设备固件前端）
+    "wan": "ntwk/wan",
+    "wlanradio": "ntwk/wlanradio",
+    "channelinfo": "ntwk/channelinfo",
+    "reboot": "service/reboot.cgi",
 }
 
 

@@ -11,12 +11,13 @@ import os
 import sys
 import tempfile
 import threading
+import time
 import unittest
 from unittest import mock
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from app import discover, trustlist, wol  # noqa: E402
+from app import discover, tasks as tk, trustlist, wol  # noqa: E402
 from app.config import Config, Rule  # noqa: E402
 from app.node import Node  # noqa: E402
 from app.settings import SettingsError  # noqa: E402
@@ -1174,6 +1175,399 @@ class TestWakeAdmission(unittest.TestCase):
         node = self.make_node(FakeRouter())
         with self.assertRaises(SettingsError):
             node.wake_device({"mac": "nope"})
+
+
+class FakeActionRouter:
+    """只实现计划任务用到的四个动作接口，并记录每次请求的原始形态。"""
+
+    def __init__(self, power=1, wan_id="InternetConnection_1"):
+        self.power = power
+        self.wan_id = wan_id
+        self.posts = []
+        self.gets = []
+        self.rebooted = False
+
+    def get(self, name, params=None):
+        self.gets.append(name)
+        if name == "wlanradio":
+            return {"Enable2G": True, "Enable5G": True, "InitEnable2G": True,
+                    "InitEnable5G": True, "PowerMode": self.power,
+                    "PowerModeChgTip": 0, "WLANMode": 1}
+        if name == "channelinfo":
+            return {"ChannelDeploy": 1, "NetChannelMode": 3}
+        if name == "wan":
+            if not self.wan_id:
+                return {"wanTypeActivecontrol": {}}
+            return {"wanTypeActivecontrol": {"ID": self.wan_id}}
+        raise AssertionError(f"假路由器没实现 GET {name}")
+
+    def post(self, name, data=None, wrapped=True, action=None):
+        self.posts.append({"name": name, "data": data,
+                           "action": action, "wrapped": wrapped})
+        if name == "service/reboot.cgi":
+            self.rebooted = True
+            return {}
+        if name in ("wan", "ntwk/wan"):
+            return {}
+        if name in ("wlanradio", "ntwk/wlanradio"):
+            self.power = int((data or {}).get("PowerMode", self.power))
+            return {}
+        if name in ("channelinfo", "ntwk/channelinfo"):
+            return {}
+        raise AssertionError(f"假路由器没实现 POST {name}")
+
+
+class FlipFlopRouter(FakeActionRouter):
+    """最小写被忽略的固件：第一次 wlanradio POST 不动档位，整包写才生效。"""
+
+    def __init__(self, power=1):
+        super().__init__(power=power)
+        self.n = 0
+
+    def post(self, name, data=None, wrapped=True, action=None):
+        self.posts.append({"name": name, "data": data,
+                           "action": action, "wrapped": wrapped})
+        if name in ("wlanradio", "ntwk/wlanradio"):
+            self.n += 1
+            if self.n > 1:                       # 只有第二次（整包）才认
+                self.power = int((data or {}).get("PowerMode", self.power))
+            return {}
+        return {}
+
+
+def _epoch(y, mo, d, h, mi):
+    return time.mktime((y, mo, d, h, mi, 0, 0, 0, -1))
+
+
+class TestTaskTime(unittest.TestCase):
+    """到点判定：这是整块功能里唯一容易算错的地方。"""
+
+    def test_parse_at(self):
+        self.assertEqual(tk.parse_at("04:30"), (4, 30))
+        self.assertEqual(tk.parse_at("4:05"), (4, 5))
+        self.assertEqual(tk.parse_at("23:59"), (23, 59))
+        for bad in ("24:00", "12:60", "0430", "", None, "ab:cd"):
+            with self.assertRaises(ValueError, msg=str(bad)):
+                tk.parse_at(bad)
+
+    def test_last_slot_daily(self):
+        now = _epoch(2026, 10, 24, 4, 31)
+        task = {"at": "04:30", "days": [1, 2, 3, 4, 5, 6, 7]}
+        slot = tk.last_slot(task, now)
+        self.assertEqual(slot, _epoch(2026, 10, 24, 4, 30))
+
+    def test_last_slot_before_todays_point_rolls_back(self):
+        """今天还没到 04:30 时，最近一个计划点是昨天的。"""
+        now = _epoch(2026, 10, 24, 3, 0)
+        task = {"at": "04:30", "days": [1, 2, 3, 4, 5, 6, 7]}
+        self.assertEqual(tk.last_slot(task, now), _epoch(2026, 10, 23, 4, 30))
+
+    def test_last_slot_weekday_filter(self):
+        """2026-10-24 是周六。只在周一执行的任务：最近计划点是 10-19。"""
+        now = _epoch(2026, 10, 24, 12, 0)
+        task = {"at": "04:30", "days": [1]}
+        slot = tk.last_slot(task, now)
+        self.assertEqual(time.localtime(slot).tm_wday, 0)        # 周一
+        self.assertEqual(slot, _epoch(2026, 10, 19, 4, 30))
+
+    def test_next_slot(self):
+        now = _epoch(2026, 10, 24, 4, 31)
+        task = {"at": "04:30", "days": [1, 2, 3, 4, 5, 6, 7]}
+        self.assertEqual(tk.next_slot(task, now), _epoch(2026, 10, 25, 4, 30))
+
+    def test_due_inside_window(self):
+        now = _epoch(2026, 10, 24, 4, 32)
+        task = {"at": "04:30", "days": [1, 2, 3, 4, 5, 6, 7], "enabled": True}
+        self.assertIsNotNone(tk.due_slot(task, now))
+
+    def test_due_outside_window_not_fired(self):
+        """过了窗口就不补跑 —— 否则容器晚起两小时会突然重启一次路由器。"""
+        now = _epoch(2026, 10, 24, 6, 0)
+        task = {"at": "04:30", "days": [1, 2, 3, 4, 5, 6, 7], "enabled": True}
+        self.assertIsNone(tk.due_slot(task, now))
+
+    def test_due_skipped_when_already_fired(self):
+        slot = _epoch(2026, 10, 24, 4, 30)
+        now = _epoch(2026, 10, 24, 4, 31)
+        task = {"at": "04:30", "days": [1, 2, 3, 4, 5, 6, 7],
+                "enabled": True, "last_slot": slot}
+        self.assertIsNone(tk.due_slot(task, now))
+
+    def test_disabled_never_due(self):
+        now = _epoch(2026, 10, 24, 4, 31)
+        task = {"at": "04:30", "days": [1, 2, 3, 4, 5, 6, 7], "enabled": False}
+        self.assertIsNone(tk.due_slot(task, now))
+
+    def test_describe(self):
+        self.assertEqual(tk.describe({"at": "04:30", "days": [1, 2, 3, 4, 5, 6, 7]}),
+                         "每天 04:30")
+        self.assertEqual(tk.describe({"at": "04:30", "days": [1]}), "每周一 04:30")
+        self.assertEqual(tk.describe({"at": "23:00", "days": [1, 4]}),
+                         "每周一、四 23:00")
+        self.assertEqual(
+            tk.describe({"at": "22:00", "days": [1, 2, 3, 4, 5, 6, 7],
+                         "kind": "wifi_power", "params": {"power_mode": 0}}),
+            "每天 22:00 → 睡眠")
+
+
+class TestTaskModel(unittest.TestCase):
+    def test_clean_defaults(self):
+        t = tk.clean_task({"kind": "reboot", "at": "4:05"})
+        self.assertEqual(t["at"], "04:05")
+        self.assertEqual(t["days"], [1, 2, 3, 4, 5, 6, 7])
+        self.assertEqual(t["name"], "重启路由器")
+        self.assertTrue(t["enabled"])
+        self.assertTrue(t["id"].startswith("t"))
+
+    def test_clean_rejects(self):
+        for bad in ({"kind": "nope", "at": "04:30"},
+                    {"kind": "reboot", "at": "25:00"},
+                    {"kind": "wifi_power", "at": "04:30"},
+                    {"kind": "wifi_power", "at": "04:30",
+                     "params": {"power_mode": 9}}):
+            with self.assertRaises(ValueError, msg=str(bad)):
+                tk.clean_task(bad)
+
+    def test_clean_days_normalized(self):
+        t = tk.clean_task({"kind": "reboot", "at": "04:30",
+                           "days": [7, 3, 3, 0, 9]})
+        self.assertEqual(t["days"], [3, 7])
+
+    def test_name_too_long(self):
+        with self.assertRaises(ValueError):
+            tk.clean_task({"kind": "reboot", "at": "04:30", "name": "x" * 31})
+
+    def test_roundtrip_persistence(self):
+        with tempfile.TemporaryDirectory() as d:
+            path = os.path.join(d, "tasks.json")
+            a = tk.Tasks(lambda: FakeActionRouter(), path)
+            a.upsert({"kind": "reboot", "at": "04:30", "name": "每晚重启"})
+            a.upsert({"kind": "wifi_power", "at": "22:00",
+                      "params": {"power_mode": 0}})
+            b = tk.Tasks(lambda: FakeActionRouter(), path)
+            view = b.view()
+            self.assertEqual(len(view["tasks"]), 2)
+            self.assertEqual(view["tasks"][0]["when"], "每天 04:30")
+            self.assertEqual(view["tasks"][1]["kind_label"], "Wi-Fi 功率模式")
+
+    def test_delete_and_toggle(self):
+        with tempfile.TemporaryDirectory() as d:
+            path = os.path.join(d, "tasks.json")
+            s = tk.Tasks(lambda: FakeActionRouter(), path)
+            tid = s.upsert({"kind": "reboot", "at": "04:30"})["task"]["id"]
+            self.assertFalse(s.toggle(tid, False)["enabled"])
+            self.assertFalse(s.view()["tasks"][0]["enabled"])
+            s.delete(tid)
+            self.assertEqual(s.view()["tasks"], [])
+            with self.assertRaises(ValueError):
+                s.delete(tid)
+
+
+class TestTaskApply(unittest.TestCase):
+    """四个动作的请求形态 —— 全部逆向自固件前端，错了就是 400。"""
+
+    def test_reboot_payload_has_no_data_key(self):
+        r = FakeActionRouter()
+        res = tk.apply(r, {"kind": "reboot"})
+        self.assertTrue(res["ok"])
+        self.assertEqual(len(r.posts), 1)
+        p = r.posts[0]
+        self.assertEqual(p["name"], "service/reboot.cgi")
+        self.assertFalse(p["wrapped"])          # → body 里连 data 键都没有
+        self.assertEqual(p["data"], {})
+        self.assertTrue(r.rebooted)
+
+    def test_redial_reads_wan_id_first(self):
+        r = FakeActionRouter(wan_id="InternetConnection_3")
+        res = tk.apply(r, {"kind": "redial"})
+        self.assertTrue(res["ok"])
+        self.assertEqual(r.gets, ["wan"])
+        p = r.posts[0]
+        self.assertEqual(p["name"], "wan")
+        self.assertEqual(p["action"], "reconnect")
+        self.assertEqual(p["data"], {"Path": "InternetConnection_3"})
+
+    def test_redial_without_wan_id_refuses(self):
+        """Path 写死会失效，取不到就别发 —— 发一个空 Path 只会拿到错误码。"""
+        r = FakeActionRouter(wan_id="")
+        res = tk.apply(r, {"kind": "redial"})
+        self.assertFalse(res["ok"])
+        self.assertIn("WAN", res["msg"])
+        self.assertEqual(r.posts, [])
+
+    def test_wifi_power_minimal_write(self):
+        r = FakeActionRouter(power=1)
+        res = tk.apply(r, {"kind": "wifi_power", "params": {"power_mode": 2}})
+        self.assertTrue(res["ok"])
+        self.assertEqual(r.posts[0]["data"], {"PowerMode": 2})   # 只发这一个字段
+        self.assertEqual(r.power, 2)
+
+    def test_wifi_power_skips_when_already_there(self):
+        r = FakeActionRouter(power=1)
+        res = tk.apply(r, {"kind": "wifi_power", "params": {"power_mode": 1}})
+        self.assertTrue(res["ok"])
+        self.assertTrue(res.get("skipped"))
+        self.assertEqual(r.posts, [])           # 值没变就不写，少一次写操作
+
+    def test_wifi_power_falls_back_to_full_object(self):
+        r = FlipFlopRouter(power=1)
+        res = tk.apply(r, {"kind": "wifi_power", "params": {"power_mode": 0}})
+        self.assertTrue(res["ok"])
+        self.assertEqual(len(r.posts), 2)
+        full = r.posts[1]["data"]
+        self.assertEqual(full["PowerMode"], 0)
+        # 完整写回时带上读到的全部 7 个字段（实测不含 SSID / 密码）
+        for k in ("Enable2G", "Enable5G", "InitEnable2G", "InitEnable5G",
+                  "PowerModeChgTip", "WLANMode"):
+            self.assertIn(k, full)
+
+    def test_wifi_power_reports_failure(self):
+        class Dead(FakeActionRouter):
+            def post(self, name, data=None, wrapped=True, action=None):
+                self.posts.append({"name": name, "data": data,
+                                   "action": action, "wrapped": wrapped})
+                return {}                       # 永远不认
+
+        r = Dead(power=1)
+        res = tk.apply(r, {"kind": "wifi_power", "params": {"power_mode": 2}})
+        self.assertFalse(res["ok"])
+        self.assertIn("没生效", res["msg"])
+
+    def test_channel_reuses_current_values(self):
+        """一键优化的 body 是「当前值 + action=UpdateAll」，不是写死 1 / 1。"""
+        r = FakeActionRouter()
+        res = tk.apply(r, {"kind": "channel"})
+        self.assertTrue(res["ok"])
+        self.assertEqual(r.posts[0]["name"], "channelinfo")
+        self.assertEqual(r.posts[0]["data"],
+                         {"action": "UpdateAll", "ChannelDeploy": 1,
+                          "NetChannelMode": 3})
+
+    def test_find_wan_id_fallbacks(self):
+        self.assertEqual(tk.find_wan_id({"wanTypeActivecontrol": {"ID": "InternetConnection_1"}}),
+                         "InternetConnection_1")
+        # 大小写不一致的固件
+        self.assertEqual(tk.find_wan_id({"WanTypeActivecontrol": {"Id": "InternetConnection_2"}}),
+                         "InternetConnection_2")
+        # 藏在列表里
+        self.assertEqual(tk.find_wan_id({"x": [{"y": {"id": "InternetConnection_7"}}]}),
+                         "InternetConnection_7")
+        self.assertEqual(tk.find_wan_id({"nothing": 1}), "")
+
+
+class TestTaskScheduler(unittest.TestCase):
+    def make(self, d, router=None):
+        router = router or FakeActionRouter()
+        return tk.Tasks(lambda: router, os.path.join(d, "tasks.json")), router
+
+    def test_tick_fires_once_and_records(self):
+        with tempfile.TemporaryDirectory() as d:
+            s, r = self.make(d)
+            s.upsert({"kind": "reboot", "at": "04:30"})
+            now = _epoch(2026, 10, 24, 4, 30)
+            res = s.tick(now)
+            self.assertTrue(res["ok"])
+            self.assertTrue(r.rebooted)
+            # 同一分钟再心跳一次：不能重复执行
+            self.assertIsNone(s.tick(now + 5))
+
+    def test_quiet_period_blocks_next_fire(self):
+        with tempfile.TemporaryDirectory() as d:
+            s, r = self.make(d)
+            s.upsert({"kind": "reboot", "at": "04:30"})
+            now = _epoch(2026, 10, 24, 4, 30)
+            s.tick(now)
+            self.assertGreater(s.quiet_left(), 0)
+            self.assertIsNone(s.tick(now + 30))      # 静默期内什么都不做
+
+    def test_quiet_persists_across_restart(self):
+        """容器恰好在这时重启，静默期也要继续生效，否则会立刻再触发一次。"""
+        with tempfile.TemporaryDirectory() as d:
+            path = os.path.join(d, "tasks.json")
+            s1 = tk.Tasks(lambda: FakeActionRouter(), path)
+            s1.upsert({"kind": "reboot", "at": "04:30"})
+            s1.tick(_epoch(2026, 10, 24, 4, 30))
+            s2 = tk.Tasks(lambda: FakeActionRouter(), path)
+            self.assertGreater(s2.quiet_left(), 0)
+
+    def test_only_one_task_per_slot(self):
+        with tempfile.TemporaryDirectory() as d:
+            s, r = self.make(d)
+            s.upsert({"kind": "reboot", "at": "04:30", "name": "A"})
+            s.upsert({"kind": "channel", "at": "04:30", "name": "B"})
+            now = _epoch(2026, 10, 24, 4, 30)
+            s.tick(now)
+            self.assertEqual(len(r.posts), 1)        # 只跑了一个
+            msgs = [t["last_msg"] for t in s.view()["tasks"]]
+            self.assertTrue(any("跳过" in m for m in msgs), msgs)
+
+    def test_mark_missed_does_not_backfill(self):
+        with tempfile.TemporaryDirectory() as d:
+            s, r = self.make(d)
+            s.upsert({"kind": "reboot", "at": "04:30"})
+            missed = s.mark_missed(_epoch(2026, 10, 24, 9, 0))
+            self.assertEqual(missed, ["重启路由器"])
+            self.assertFalse(r.rebooted)             # 没真去重启
+            self.assertIsNone(s.tick(_epoch(2026, 10, 24, 9, 1)))
+
+    def test_disabled_task_not_fired(self):
+        with tempfile.TemporaryDirectory() as d:
+            s, r = self.make(d)
+            tid = s.upsert({"kind": "reboot", "at": "04:30"})["task"]["id"]
+            s.toggle(tid, False)
+            self.assertIsNone(s.tick(_epoch(2026, 10, 24, 4, 30)))
+            self.assertFalse(r.rebooted)
+
+    def test_manual_run_ignores_window(self):
+        with tempfile.TemporaryDirectory() as d:
+            s, r = self.make(d)
+            tid = s.upsert({"kind": "channel", "at": "04:30"})["task"]["id"]
+            res = s.run(tid, manual=True)            # 什么时间点都能手动跑
+            self.assertTrue(res["ok"])
+            self.assertEqual(len(r.posts), 1)
+
+    def test_failure_is_recorded_and_not_retried(self):
+        with tempfile.TemporaryDirectory() as d:
+            class Boom(FakeActionRouter):
+                def post(self, *a, **k):
+                    raise RuntimeError("路由器掉线")
+            s = tk.Tasks(lambda: Boom(), os.path.join(d, "tasks.json"))
+            s.upsert({"kind": "reboot", "at": "04:30"})
+            now = _epoch(2026, 10, 24, 4, 30)
+            res = s.tick(now)
+            self.assertFalse(res["ok"])
+            task = s.view()["tasks"][0]
+            self.assertFalse(task["last_ok"])
+            self.assertIn("路由器掉线", task["last_msg"])
+            self.assertIsNone(s.tick(now + 5))       # 失败也不重试
+
+    def test_write_before_send(self):
+        """先落盘再发请求：发送瞬间被 kill 也不会重复触发。"""
+        with tempfile.TemporaryDirectory() as d:
+            path = os.path.join(d, "tasks.json")
+            seen = {}
+
+            class Check(FakeActionRouter):
+                def post(self, *a, **k):
+                    with open(path, encoding="utf-8") as f:
+                        seen["hit"] = json.load(f)["tasks"][0]["last_slot"]
+                    return {}
+
+            s = tk.Tasks(lambda: Check(), path)
+            s.upsert({"kind": "reboot", "at": "04:30"})
+            now = _epoch(2026, 10, 24, 4, 30)
+            s.tick(now)
+            self.assertEqual(seen["hit"], now)
+
+    def test_bad_file_is_tolerated(self):
+        with tempfile.TemporaryDirectory() as d:
+            path = os.path.join(d, "tasks.json")
+            with open(path, "w", encoding="utf-8") as f:
+                f.write("{ 这不是 json")
+            s = tk.Tasks(lambda: FakeActionRouter(), path)
+            self.assertEqual(s.view()["tasks"], [])
+            s.upsert({"kind": "reboot", "at": "04:30"})   # 还能正常用
+            self.assertEqual(len(s.view()["tasks"]), 1)
 
 
 if __name__ == "__main__":

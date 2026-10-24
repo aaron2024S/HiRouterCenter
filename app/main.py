@@ -209,6 +209,19 @@ def main(argv=None):
     srv = None
     webui = None
     if not cfg.once:
+        # 容器起来时先扫一遍：早就过了窗口的计划点直接标「已错过」，不补跑
+        # （补跑 = NAS 半夜重启后立刻重启一次路由器）
+        node.tasks.mark_missed()
+
+        def _tasks_loop():
+            while not _STOP.wait(3.0):
+                try:
+                    node.tasks_tick()
+                except Exception as e:             # noqa: BLE001
+                    log.warning("计划任务调度出错（不影响同步）：%s", e)
+
+        threading.Thread(target=_tasks_loop, name="tasks", daemon=True).start()
+
         srv = start_health_server(node, cfg.health_port, cfg.health_host)
         webui = webui_from_env(node)
         webui.start()
@@ -231,7 +244,12 @@ def main(argv=None):
     try:
         while not _STOP.is_set():
             started = time.time()
-            snap = syncer.tick()
+            if not cfg.once and node.in_quiet():
+                # 刚发过重启/重拨：路由器可能还没回来。此时既不算失败也不重试
+                # —— 重试就等于反复重启。同步让路，静默期过了自然恢复。
+                snap = syncer.snapshot()
+            else:
+                snap = syncer.tick()
             if cfg.once:
                 print(json.dumps(snap, ensure_ascii=False, indent=1))
                 summary = {k: v["action"] for k, v in snap["rules"].items()}

@@ -261,6 +261,17 @@ class WebUI:
                     self.node.update_whitelist_entry(_json_body(body)))
             if method == "POST" and route == "/api/notify/test":
                 return handler.send_json(self.node.test_notify())
+            # ---- 计划任务（读不需要动作，写全部要求登录 + 同源，已在上方拦过） ----
+            if method == "GET" and route == "/api/tasks":
+                return handler.send_json(self.node.tasks_view())
+            if method == "POST" and route == "/api/tasks/save":
+                return handler.send_json(self.node.task_save(_json_body(body)))
+            if method == "POST" and route == "/api/tasks/delete":
+                return handler.send_json(self.node.task_delete(_json_body(body)))
+            if method == "POST" and route == "/api/tasks/toggle":
+                return handler.send_json(self.node.task_toggle(_json_body(body)))
+            if method == "POST" and route == "/api/tasks/run":
+                return handler.send_json(self.node.task_run(_json_body(body)))
         except st.SettingsError as e:
             return handler.send_json({"ok": False, "error": str(e)}, 400)
         except Exception as e:  # noqa: BLE001

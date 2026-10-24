@@ -37,6 +37,9 @@ services:
     environment:
       - ADMIN_USERNAME=admin
       - ADMIN_PASSWORD=change-me-please
+      # 计划任务按容器本地时间执行。不设这一行，容器默认跑 UTC，
+      # 你填的 04:30 会变成北京时间 12:30。可按需改成自己的时区。
+      - TZ=${TZ:-Asia/Shanghai}
 
     # 其余设置一律在网页里改，env_file 留给进阶用法（docker secret 等）：
     # env_file: .env

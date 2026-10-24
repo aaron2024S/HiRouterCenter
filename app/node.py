@@ -18,7 +18,7 @@ import logging
 import os
 import threading
 
-from . import discover, events, notify, settings as st, trustlist, wol
+from . import discover, events, notify, settings as st, tasks as tk, trustlist, wol
 from .config import load_config
 from .router import HuaweiRouter, RouterError
 from .sync import Syncer
@@ -133,6 +133,11 @@ class Node:
         self._lock = threading.RLock()
         # 网络唤醒的限频闸（同一台设备 10 秒内只发一次）
         self._wol_gate = wol.Throttle(cooldown=10.0)
+        # 计划任务：调度在本地算，路由器只负责执行。
+        # get_router 用 lambda —— 网页改了密码会重建 router，调度器不能握着旧会话。
+        self.tasks = tk.Tasks(lambda: self.router,
+                              tk.tasks_path(self.settings_file),
+                              guard=lambda: self.syncer.lock)
 
     # ---------------- 只读视图 ----------------
 
@@ -452,6 +457,48 @@ class Node:
             log.warning("向 %s（%s）发送唤醒包失败：%s", label, hit["mac"],
                         res.get("error"))
         return res
+
+    # ---------------- 计划任务（重启 / 重拨 / 功率模式 / 信道优化） ----------------
+    #
+    # 分工：**什么时候执行在本地算，路由器只负责「现在做」**。Q7 固件把
+    # 「重启计划」「定时重拨」页面裁掉了，只能由本程序到点去按对应的按钮。
+
+    def tasks_view(self) -> dict:
+        return self.tasks.view()
+
+    def tasks_tick(self) -> dict | None:
+        return self.tasks.tick()
+
+    def in_quiet(self) -> bool:
+        """刚才执行过重启/重拨等动作，路由器可能还没回来 —— 此时同步应当让路。"""
+        return self.tasks.quiet_left() > 0
+
+    def task_save(self, data: dict) -> dict:
+        try:
+            return self.tasks.upsert(data)
+        except ValueError as e:
+            raise st.SettingsError(str(e))
+
+    def task_delete(self, data: dict) -> dict:
+        try:
+            return self.tasks.delete(str(data.get("id") or ""))
+        except ValueError as e:
+            raise st.SettingsError(str(e))
+
+    def task_toggle(self, data: dict) -> dict:
+        try:
+            return self.tasks.toggle(str(data.get("id") or ""),
+                                     bool(data.get("enabled", True)))
+        except ValueError as e:
+            raise st.SettingsError(str(e))
+
+    def task_run(self, data: dict) -> dict:
+        """手动执行一次（页面的「立即执行」）。不需要登录路由器也能排队，
+        真正发请求时会走 ensure_login 的退避。"""
+        try:
+            return self.tasks.run(str(data.get("id") or ""), manual=True)
+        except ValueError as e:
+            raise st.SettingsError(str(e))
 
     # ---------------- 白名单规则管理（网页白名单页的弹窗） ----------------
 

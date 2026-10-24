@@ -194,6 +194,22 @@ tr.offrow td{opacity:.62}
 .dlg input,.dlg select{width:100%;font-size:13.5px;padding:8px 10px}
 .dlgbtns{display:flex;justify-content:center;gap:12px;margin-top:16px}
 .dlgbtns button{min-width:96px}
+/* 计划任务 */
+#taskMask{position:fixed;inset:0;background:rgba(15,18,24,.45);display:flex;
+  align-items:center;justify-content:center;z-index:50;padding:16px}
+.tkwk{display:flex;gap:6px;flex-wrap:wrap}
+.tkwk button{min-width:38px;padding:6px 0;font-size:12.5px}
+.tkwk button.on{background:var(--accent);border-color:var(--accent);color:#fff;font-weight:600}
+.tkwhen{color:var(--muted);font-size:12px}
+.tkbtns{display:flex;gap:6px;flex-wrap:nowrap}
+.tkbtns .wbtn{padding:3px 10px}
+.tkbtns .danger{color:var(--err);border-color:var(--btn-line)}
+.tkbtns .danger:hover{border-color:var(--err);background:transparent}
+.swmini{display:inline-flex;align-items:center;gap:6px;font-size:12px;color:var(--muted)}
+.tkoff td{opacity:.55}
+.tkbad{color:var(--err);font-size:12px;white-space:normal;max-width:320px;min-width:200px}
+.tkok{color:var(--ok);font-size:12px;white-space:normal;max-width:320px;min-width:200px}
+.tkwait{color:var(--muted);font-size:12px;white-space:normal;max-width:320px;min-width:200px}
 </style>
 </head>
 <body>
@@ -228,6 +244,7 @@ tr.offrow td{opacity:.62}
   <nav class="tabs" role="tablist">
     <button class="tab active" id="tabbtn-main" data-tab="main">同步与设置</button>
     <button class="tab" id="tabbtn-devices" data-tab="devices">设备列表</button>
+    <button class="tab" id="tabbtn-tasks" data-tab="tasks">计划任务</button>
     <button class="tab" id="tabbtn-events" data-tab="events">同步记录</button>
     <button class="tab" id="tabbtn-notify" data-tab="notify">通知设置</button>
     <button class="tab" id="tabbtn-status" data-tab="status">运行状态</button>
@@ -287,6 +304,25 @@ tr.offrow td{opacity:.62}
       <div id="devbox-kids" class="hide"></div>
     </div>
   </div><!-- /tab-devices -->
+
+  <div id="tab-tasks" class="hide">
+    <div class="card">
+      <h2>计划任务<button id="btnTasks" class="primary hbtn"><svg viewBox="0 0 16 16" width="13" height="13"
+        style="vertical-align:-2px" aria-hidden="true"><path fill="none"
+        stroke="currentColor" stroke-width="1.8" stroke-linecap="round"
+        d="M13.5 8a5.5 5.5 0 1 1-1.6-3.9M13.5 1.8v2.7h-2.7"/></svg> 刷新</button></h2>
+      <p class="desc">到点由本程序去按路由器上对应的那个按钮 —— <b>计划存在这台机器上，
+        路由器里什么都不写</b>。路由器固件把「重启计划」「定时重拨」两个页面裁掉了，
+        所以定时只能在这里做。正因为如此：<b>容器停了任务就不会执行</b>，
+        停容器期间到点的任务会记一条「已错过」，起来后<b>不补跑</b>。</p>
+      <div class="toolbar" style="margin-bottom:10px">
+        <button id="btnTaskAdd" class="primary">＋ 添加任务</button>
+        <span class="desc" style="margin:0" id="taskMeta"></span>
+      </div>
+      <div id="taskBox"></div>
+      <p class="devnote" id="taskNote"></p>
+    </div>
+  </div><!-- /tab-tasks -->
 
   <div id="tab-events" class="hide">
     <div class="card">
@@ -392,6 +428,37 @@ tr.offrow td{opacity:.62}
 </div>
 
 <div id="toast"></div>
+
+<div id="taskMask" class="hide">
+  <div class="dlg">
+    <h3 id="tkTitle">添加计划任务</h3>
+    <label class="flab">任务类型</label>
+    <select id="tkKind">
+      <option value="reboot">重启路由器</option>
+      <option value="redial">重新拨号（重连 WAN）</option>
+      <option value="wifi_power">Wi-Fi 功率模式</option>
+      <option value="channel">信道优化</option>
+    </select>
+    <label class="flab" id="tkPowerLab" style="display:none">切换到</label>
+    <select id="tkPower" style="display:none">
+      <option value="0">睡眠（省电，覆盖最弱）</option>
+      <option value="1">一般（出厂默认）</option>
+      <option value="2">穿墙（覆盖最强）</option>
+    </select>
+    <label class="flab">任务名（可留空）</label>
+    <input type="text" id="tkName" placeholder="例如：每晚重启" autocomplete="off">
+    <label class="flab">执行时间</label>
+    <input type="time" id="tkAt" value="04:30">
+    <label class="flab">重复</label>
+    <div class="tkwk" id="tkDays"></div>
+    <p class="devnote" id="tkTip" style="margin:8px 0 0"></p>
+    <div class="msg" id="tkMsg"></div>
+    <div class="dlgbtns">
+      <button id="tkCancel">取消</button>
+      <button id="tkSave" class="primary">保存</button>
+    </div>
+  </div>
+</div>
 
 <script>
 (function () {
@@ -963,7 +1030,7 @@ tr.offrow td{opacity:.62}
   // ---------- 选项卡 ----------
   var hostsLoaded = false;
   function switchTab(name) {
-    ["main", "devices", "events", "notify", "status", "about"].forEach(function (t) {
+    ["main", "devices", "tasks", "events", "notify", "status", "about"].forEach(function (t) {
       document.getElementById("tab-" + t).classList.toggle("hide", t !== name);
       document.getElementById("tabbtn-" + t).classList.toggle("active", t === name);
     });
@@ -971,9 +1038,11 @@ tr.offrow td{opacity:.62}
     curTab = name;
     syncFoot();
     if (name === "devices" && !hostsLoaded) { loadHosts(); }   // 首次打开自动拉一次
+    if (name === "tasks" && !tkLoaded) { loadTasks(); }
   }
   document.getElementById("tabbtn-main").addEventListener("click", function () { switchTab("main"); });
   document.getElementById("tabbtn-devices").addEventListener("click", function () { switchTab("devices"); });
+  document.getElementById("tabbtn-tasks").addEventListener("click", function () { switchTab("tasks"); });
   document.getElementById("tabbtn-events").addEventListener("click", function () {
     switchTab("events");
     if (!evLoaded) { loadEvents(); }
@@ -1286,6 +1355,250 @@ tr.offrow td{opacity:.62}
       .then(function () { btn.disabled = false; });
   }
   document.getElementById("btnHosts").addEventListener("click", function () { loadHosts(); });
+
+  // ---------- 计划任务（调度在这台机器上算，路由器只负责「现在做」） ----------
+  var tkLoaded = false;
+  var tkData = { tasks: [], quiet_left: 0 };
+  var tkEditing = null;          // null = 新增；否则是正在编辑的任务 id
+  var tkDays = [1, 2, 3, 4, 5, 6, 7];
+  var TK_WEEK = { 1: "一", 2: "二", 3: "三", 4: "四", 5: "五", 6: "六", 7: "日" };
+  var TK_TIP = {
+    reboot: "到点让路由器重启：约 1 分钟后断开、2~3 分钟恢复。这段时间本程序既不报错也不重试" +
+            "（重试就等于反复重启）。",
+    redial: "到点让路由器重新拨号，等于「我要上网」页那个「重新连接」按钮。断网十来秒。",
+    wifi_power: "到点切换 Wi-Fi 功率档位。切到「睡眠」会明显缩小覆盖范围，适合夜里。",
+    channel: "到点让路由器自动挑一个更空闲的信道。Wi-Fi 会闪断几十秒，有线不受影响。"
+  };
+
+  function tkCellText(v) {
+    var td = document.createElement("td");
+    td.textContent = (v === null || v === undefined || v === "") ? "—" : v;
+    return td;
+  }
+  function tkCellBtn(text, cls, fn) {
+    var b = document.createElement("button");
+    b.type = "button";
+    b.className = cls;
+    b.textContent = text;
+    b.addEventListener("click", fn);
+    return b;
+  }
+  function tkCellState(k) {
+    var td = document.createElement("td");
+    var s = document.createElement("span");
+    if (k.last_ok === true) {
+      s.className = "tkok";
+      s.textContent = (k.last_run_at || "") + " · " + (k.last_msg || "成功");
+    } else if (k.last_ok === false) {
+      s.className = "tkbad";
+      s.textContent = (k.last_run_at || "") + " · " + (k.last_msg || "失败");
+    } else if (k.last_run_at) {
+      s.className = "tkwait";
+      s.textContent = k.last_run_at + " · " + (k.last_msg || "");
+    } else {
+      s.className = "tkwait";
+      s.textContent = "还没执行过";
+    }
+    td.appendChild(s);
+    return td;
+  }
+  function tkCellBtns(k) {
+    var td = document.createElement("td");
+    var w = document.createElement("div");
+    w.className = "tkbtns";
+    w.appendChild(tkCellBtn(k.enabled ? "停用" : "启用", "wbtn", function () { tkToggle(k); }));
+    w.appendChild(tkCellBtn("立即执行", "wbtn", function () { tkRun(k); }));
+    w.appendChild(tkCellBtn("编辑", "wbtn", function () { tkOpen(k); }));
+    w.appendChild(tkCellBtn("删除", "wbtn danger", function () { tkDelete(k); }));
+    td.appendChild(w);
+    return td;
+  }
+
+  function renderTasks() {
+    var tasks = tkData.tasks || [];
+    var box = document.getElementById("taskBox");
+    box.textContent = "";
+    document.getElementById("taskMeta").textContent =
+      "共 " + tasks.length + " 个　容器时间 " + (tkData.now || "") +
+      (tkData.tz ? " " + tkData.tz : "") +
+      (tkData.quiet_left > 0 ? "　（刚执行过动作，静默中 " + tkData.quiet_left + " 秒）" : "") +
+      (tkData.utc ? "　⚠ 容器时区是 UTC，计划时间会按 UTC 执行" +
+        "（想让 04:30 是北京时间，请给容器加 TZ=Asia/Shanghai）" : "");
+
+    if (!tasks.length) {
+      var p = document.createElement("p");
+      p.className = "devnote";
+      p.textContent = "还没有计划任务。点上方「添加任务」，可以设定时重启、定时重拨、" +
+        "Wi-Fi 功率模式切换、信道优化。";
+      box.appendChild(p);
+    } else {
+      var t = document.createElement("table");
+      var hr = document.createElement("tr");
+      ["任务", "类型", "执行时间", "下次", "上次结果", "操作"].forEach(function (h) {
+        var th = document.createElement("th");
+        th.textContent = h;
+        hr.appendChild(th);
+      });
+      t.appendChild(hr);
+      tasks.forEach(function (k) {
+        var tr = document.createElement("tr");
+        if (!k.enabled) { tr.className = "tkoff"; }
+        tr.appendChild(tkCellText(k.name));
+        tr.appendChild(tkCellText(k.kind_label || k.kind));
+        tr.appendChild(tkCellText(k.when));
+        tr.appendChild(tkCellText(k.next_at));
+        tr.appendChild(tkCellState(k));
+        tr.appendChild(tkCellBtns(k));
+        t.appendChild(tr);
+      });
+      var sc = document.createElement("div");
+      sc.className = "tblwrap";
+      sc.appendChild(t);
+      box.appendChild(sc);
+    }
+    document.getElementById("taskNote").textContent =
+      "到点后只有一次尝试，失败不自动重试（重试重启等于反复断网）。" +
+      "若是错过了计划点（容器当时没运行），只会记一条「已错过」，不会补跑。";
+  }
+
+  function loadTasks() {
+    var btn = document.getElementById("btnTasks");
+    btn.disabled = true;
+    return api("/api/tasks").then(function (j) {
+      showOut("计划任务", j);
+      if (!j.ok) { toast("读取计划任务失败：" + (j.error || ""), "err"); return; }
+      tkData = j;
+      tkLoaded = true;
+      renderTasks();
+    }).catch(function (e) { showOut("计划任务", "请求失败：" + e); })
+      .then(function () { btn.disabled = false; });
+  }
+
+  function tkDayButtons() {
+    var box = document.getElementById("tkDays");
+    box.textContent = "";
+    [1, 2, 3, 4, 5, 6, 7].forEach(function (d) {
+      var b = tkCellBtn(TK_WEEK[d], tkDays.indexOf(d) >= 0 ? "on" : "", function () {
+        var i = tkDays.indexOf(d);
+        if (i >= 0 && tkDays.length > 1) { tkDays.splice(i, 1); }
+        else if (i < 0) { tkDays.push(d); }
+        tkDayButtons();
+      });
+      box.appendChild(b);
+    });
+  }
+
+  function tkKindChange() {
+    var k = document.getElementById("tkKind").value;
+    var show = (k === "wifi_power");
+    document.getElementById("tkPowerLab").style.display = show ? "" : "none";
+    document.getElementById("tkPower").style.display = show ? "" : "none";
+    document.getElementById("tkTip").textContent = TK_TIP[k] || "";
+  }
+
+  function tkOpen(task) {
+    tkEditing = task ? task.id : null;
+    document.getElementById("tkTitle").textContent = task ? "编辑计划任务" : "添加计划任务";
+    document.getElementById("tkKind").value = task ? task.kind : "reboot";
+    document.getElementById("tkName").value = task ? task.name : "";
+    document.getElementById("tkAt").value = (task && task.at) || "04:30";
+    tkDays = (task && task.days && task.days.length) ? task.days.slice() : [1, 2, 3, 4, 5, 6, 7];
+    var pm = (task && task.params && task.params.power_mode);
+    document.getElementById("tkPower").value = String(pm === 0 || pm ? pm : 1);
+    tkKindChange();
+    tkDayButtons();
+    document.getElementById("tkMsg").textContent = "";
+    document.getElementById("taskMask").classList.remove("hide");
+  }
+  function tkClose() { document.getElementById("taskMask").classList.add("hide"); }
+
+  function tkSave() {
+    var body = {
+      id: tkEditing || "",
+      kind: document.getElementById("tkKind").value,
+      name: document.getElementById("tkName").value,
+      at: document.getElementById("tkAt").value,
+      days: tkDays.slice().sort(),
+      enabled: true,
+      params: {}
+    };
+    if (body.kind === "wifi_power") {
+      body.params.power_mode = parseInt(document.getElementById("tkPower").value, 10);
+    }
+    // 编辑时保留原有开关状态与执行历史，否则「已执行过」的记录会丢、
+    // 已停用的任务会被悄悄重新启用。
+    if (tkEditing) {
+      var old = (tkData.tasks || []).filter(function (x) { return x.id === tkEditing; })[0];
+      if (old) {
+        body.enabled = !!old.enabled;
+        ["last_slot", "last_run_at", "last_ok", "last_msg"].forEach(function (f) {
+          if (f in old) { body[f] = old[f]; }
+        });
+      }
+    }
+    var btn = document.getElementById("tkSave");
+    btn.disabled = true;
+    api("/api/tasks/save", { method: "POST", body: JSON.stringify(body) })
+      .then(function (j) {
+        if (!j.ok) {
+          document.getElementById("tkMsg").textContent = j.error || "保存失败";
+          return;
+        }
+        tkClose();
+        toast("计划任务已保存", "ok");
+        loadTasks();
+      })
+      .catch(function (e) { document.getElementById("tkMsg").textContent = "请求失败：" + e; })
+      .then(function () { btn.disabled = false; });
+  }
+
+  function tkToggle(k) {
+    api("/api/tasks/toggle", {
+      method: "POST", body: JSON.stringify({ id: k.id, enabled: !k.enabled })
+    }).then(function (j) {
+      if (!j.ok) { toast("操作失败：" + (j.error || ""), "err"); return; }
+      toast(k.enabled ? "已停用「" + k.name + "」" : "已启用「" + k.name + "」", "ok");
+      loadTasks();
+    }).catch(function (e) { toast("请求失败：" + e, "err"); });
+  }
+
+  function tkRun(k) {
+    if (!window.confirm("确定现在执行「" + k.name + "」？\n\n" +
+        (k.kind === "reboot" ? "路由器会立刻重启，全网断约 2~3 分钟。"
+         : k.kind === "redial" ? "会立刻重新拨号，断网十来秒。"
+         : k.kind === "channel" ? "Wi-Fi 会闪断几十秒。"
+         : "Wi-Fi 功率档位会立刻改变。"))) { return; }
+    toast("正在执行「" + k.name + "」…");
+    api("/api/tasks/run", { method: "POST", body: JSON.stringify({ id: k.id }) })
+      .then(function (j) {
+        showOut("立即执行", j);
+        if (!j.ok) { toast("执行失败：" + (j.error || j.msg || ""), "err"); }
+        else { toast("「" + k.name + "」" + (j.msg || "已执行"), "ok"); }
+        loadTasks();
+      })
+      .catch(function (e) { toast("请求失败：" + e, "err"); });
+  }
+
+  function tkDelete(k) {
+    if (!window.confirm("删除计划任务「" + k.name + "」？删除后不会再执行。")) { return; }
+    api("/api/tasks/delete", { method: "POST", body: JSON.stringify({ id: k.id }) })
+      .then(function (j) {
+        if (!j.ok) { toast("删除失败：" + (j.error || ""), "err"); return; }
+        toast("已删除「" + k.name + "」", "ok");
+        loadTasks();
+      })
+      .catch(function (e) { toast("请求失败：" + e, "err"); });
+  }
+
+  document.getElementById("btnTasks").addEventListener("click", function () { loadTasks(); });
+  document.getElementById("btnTaskAdd").addEventListener("click", function () { tkOpen(null); });
+  document.getElementById("tkKind").addEventListener("change", tkKindChange);
+  document.getElementById("tkCancel").addEventListener("click", tkClose);
+  document.getElementById("tkSave").addEventListener("click", tkSave);
+  document.getElementById("taskMask").addEventListener("click", function (ev) {
+    if (ev.target === this) { tkClose(); }        // 点遮罩关闭，点内容不关
+  });
+
   // ---------- 白名单：路由器式表格 + 设备选址弹窗 ----------
   var dlgEditing = null;   // null=新增；{mode:"rule",old:规则名,entry:条目}；{mode:"entry",id,entry}
 

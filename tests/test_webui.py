@@ -379,6 +379,35 @@ class FakeNode:
         return {"ok": True, "mac": data.get("mac"), "sent": 12,
                 "targets": ["192.168.3.255", "255.255.255.255"]}
 
+    # ---- 计划任务 ----
+    def tasks_view(self):
+        return {"ok": True, "now": "2026-10-24 04:00:00", "quiet_left": 0,
+                "window": 180, "kinds": {"reboot": "重启路由器"},
+                "power_modes": {"1": "一般"},
+                "tasks": [{"id": "t1", "name": "每晚重启", "kind": "reboot",
+                           "enabled": True, "at": "04:30",
+                           "days": [1, 2, 3, 4, 5, 6, 7], "params": {},
+                           "when": "每天 04:30", "kind_label": "重启路由器",
+                           "next_at": "10-25 04:30", "last_ok": None}]}
+
+    def task_save(self, data):
+        if data.get("kind") == "bad":
+            raise st.SettingsError("任务类型不对")
+        self.tasks_got = data
+        return {"ok": True, "task": data}
+
+    def task_delete(self, data):
+        self.task_deleted = data.get("id")
+        return {"ok": True}
+
+    def task_toggle(self, data):
+        self.task_toggled = (data.get("id"), data.get("enabled"))
+        return {"ok": True, "enabled": data.get("enabled")}
+
+    def task_run(self, data):
+        self.task_ran = data.get("id")
+        return {"ok": True, "msg": "已执行"}
+
     def set_firewall(self, on):
         return {"ok": True, "enabled": on}
 
@@ -678,7 +707,12 @@ class WebUITest(unittest.TestCase):
     def test_actions_require_login(self):
         for path, method in (("/api/settings", "POST"), ("/api/sync", "POST"),
                              ("/api/router/whitelist", "GET"),
-                             ("/api/wol", "POST")):
+                             ("/api/wol", "POST"),
+                             ("/api/tasks", "GET"),
+                             ("/api/tasks/save", "POST"),
+                             ("/api/tasks/delete", "POST"),
+                             ("/api/tasks/toggle", "POST"),
+                             ("/api/tasks/run", "POST")):
             code, j, _ = call(self.base, path, method, body={} if method == "POST" else None)
             self.assertEqual(code, 401, path)
             self.assertFalse(j["ok"])
@@ -839,6 +873,56 @@ class WebUITest(unittest.TestCase):
         cookie = self.login()
         code, j, _ = call(self.base, "/api/nope", cookie=cookie)
         self.assertEqual((code, j["ok"]), (404, False))
+
+    # ---- 计划任务 ----
+    def test_tasks_view(self):
+        cookie = self.login()
+        code, j, _ = call(self.base, "/api/tasks", cookie=cookie)
+        self.assertEqual((code, j["ok"]), (200, True))
+        self.assertEqual(j["tasks"][0]["name"], "每晚重启")
+        self.assertEqual(j["tasks"][0]["when"], "每天 04:30")
+
+    def test_tasks_save(self):
+        cookie = self.login()
+        code, j, _ = call(self.base, "/api/tasks/save", "POST",
+                          {"kind": "reboot", "at": "04:30", "days": [1, 2, 3]},
+                          cookie=cookie)
+        self.assertEqual((code, j["ok"]), (200, True))
+        self.assertEqual(self.node.tasks_got["at"], "04:30")
+
+    def test_tasks_save_validation_error_is_400(self):
+        cookie = self.login()
+        code, j, _ = call(self.base, "/api/tasks/save", "POST",
+                          {"kind": "bad", "at": "04:30"}, cookie=cookie)
+        self.assertEqual(code, 400)
+        self.assertFalse(j["ok"])
+
+    def test_tasks_toggle_and_delete(self):
+        cookie = self.login()
+        code, j, _ = call(self.base, "/api/tasks/toggle", "POST",
+                          {"id": "t1", "enabled": False}, cookie=cookie)
+        self.assertEqual((code, j["ok"]), (200, True))
+        self.assertEqual(self.node.task_toggled, ("t1", False))
+
+        code, j, _ = call(self.base, "/api/tasks/delete", "POST",
+                          {"id": "t1"}, cookie=cookie)
+        self.assertEqual((code, j["ok"]), (200, True))
+        self.assertEqual(self.node.task_deleted, "t1")
+
+    def test_tasks_run(self):
+        cookie = self.login()
+        code, j, _ = call(self.base, "/api/tasks/run", "POST",
+                          {"id": "t1"}, cookie=cookie)
+        self.assertEqual((code, j["ok"]), (200, True))
+        self.assertEqual(self.node.task_ran, "t1")
+
+    def test_tasks_write_requires_same_origin(self):
+        """重启/重拨会断网，这类写操作尤其不能让跨站请求碰到。"""
+        cookie = self.login()
+        code, j, _ = call(self.base, "/api/tasks/run", "POST", {"id": "t1"},
+                          cookie=cookie, origin="http://evil.example")
+        self.assertEqual(code, 403)
+        self.assertFalse(hasattr(self.node, "task_ran"))
 
 
 class WebUILoginThrottleTest(unittest.TestCase):
