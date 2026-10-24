@@ -489,9 +489,11 @@ html[data-theme="light"] .tpick-mask{background:rgba(30,34,56,.34)}
   border:1px solid var(--line-2);border-radius:16px;background:var(--ink-850);
   padding:22px;box-shadow:var(--shadow-modal)}
 .lgmark{display:grid;place-items:center;width:44px;height:44px;border-radius:13px;
-  margin-bottom:2px;background:var(--accent);color:var(--accent-ink)}
+  flex:none;background:var(--accent);color:var(--accent-ink)}
+.lghead{display:flex;align-items:center;gap:12px;margin-bottom:2px}
+.lgt{display:flex;flex-direction:column;gap:2px}
 .gatebox b{font-size:16px}
-.gsub{margin-bottom:6px;font-size:12px;color:var(--text-4)}
+.gsub{font-size:12px;color:var(--text-4)}
 .gerr{min-height:16px;font-size:12px;color:var(--err-text)}
 .gatebox .efld{display:flex;flex-direction:column}
 .gatebox .efld > span{margin-bottom:5px;font-size:11.5px;color:var(--text-4)}
@@ -901,11 +903,12 @@ html[data-theme="light"] .tpick-mask{background:rgba(30,34,56,.34)}
 
 <div class="gate hide" id="gate">
   <form class="gatebox" id="lgForm" autocomplete="on">
-    <div class="lgmark"><svg viewBox="0 0 32 32" style="width:26px;height:26px"><use href="#i-mark"/></svg></div>
-    <b>HiRouterCenter</b>
-    <span class="gsub">登录网络控制台</span>
+    <div class="lghead">
+      <div class="lgmark"><svg viewBox="0 0 32 32" style="width:26px;height:26px"><use href="#i-mark"/></svg></div>
+      <div class="lgt"><b>HiRouterCenter</b><span class="gsub">登录网络控制台</span></div>
+    </div>
     <label class="efld"><span>用户名</span>
-      <input class="inp" id="lgUser" name="username" value="admin" autocomplete="username"></label>
+      <input class="inp" id="lgUser" name="username" placeholder="admin" autocomplete="username"></label>
     <label class="efld"><span>密码</span>
       <input class="inp" id="lgPass" name="password" type="password"
         autocomplete="current-password" placeholder="控制台密码"></label>
