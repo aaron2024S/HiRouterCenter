@@ -406,7 +406,7 @@ RULES=[{"name":"NAS","port":16669,"mac":"00:11:22:AA:BB:CC"},
 
 ```
 ipv6sync/offline/dist/
-├── ipv6sync-1.2.2-amd64-image.tar     51.4 MB   x86_64 NAS（唯一产物）
+├── ipv6sync-1.2.3-amd64-image.tar     51.4 MB   x86_64 NAS（唯一产物）
 ├── docker-compose.offline.yml          无 build 段的 compose
 ├── .env.example                        环境变量模板
 ├── SHA256SUMS.txt                      tar 的 sha256
@@ -417,7 +417,7 @@ NAS 上只需要四步：
 
 ```bash
 uname -m                                    # 应该是 x86_64
-docker load -i ipv6sync-1.2.2-amd64-image.tar
+docker load -i ipv6sync-1.2.3-amd64-image.tar
 mkdir -p data && sudo chown -R 10001:10001 data
 docker compose -f docker-compose.offline.yml up -d   # 先在 yaml 的 environment 里改 ADMIN_PASSWORD
 ```
@@ -592,6 +592,21 @@ python -m unittest discover -s tests -t . -v
   设备卡上的「放行」按钮去掉，放行只在防火墙页按设备管理。
 - **计划任务**新增「定时唤醒」：设备从列表里选（最多 20 台），到点逐台间隔发 WOL。
 - 单测 **304 项**。
+
+### 1.2.3
+界面细节与推送体验一轮打磨：
+
+- **表格操作列不再叠行**：白名单表「编辑 / 删除」按钮在小屏会上下堆叠，
+  现在固定单行；「路由器白名单」表列宽改为按比例分配，空白摊匀不再挤在两列之间。
+- **登录页**：图标与标题排成一行；用户名不再预填 `admin`（只留灰色提示）。
+- **侧边栏**：「路由器设置」改为「设置」；三项主功能上方补「路由器」分组标签
+  （与下方「系统」分组对应，收起侧栏时自动隐藏）。
+- **防火墙页「下次检测」倒计时**：原来只在进页面时算一次，现在随 5 秒状态轮询
+  自动走秒（只重画数字，不额外请求路由器）。
+- **推送标题带语气图标**（对齐 dockhelm 的做法）：按事件语气取
+  ✅ 成功 / ❌ 失败 / ⚠️ 警告 / ℹ️ 提示，如「✅ 已加入 IPv6 白名单」
+  「⚠️ 设备已离线」；纯文本渠道随标题一起发，邮件主题编码兼容。
+- 单测 **331 项**。
 
 ### 1.2.2
 信息卡取数按真机抓包重写（这次是照着路由器真实返回体修的，不再猜字段名）：
