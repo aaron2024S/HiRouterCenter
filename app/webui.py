@@ -274,10 +274,11 @@ class WebUI:
                 return handler.send_json(self.node.task_run(_json_body(body)))
         except st.SettingsError as e:
             return handler.send_json({"ok": False, "error": str(e)}, 400)
-        except Exception as e:  # noqa: BLE001
+        except Exception:  # noqa: BLE001
+            # 异常类名与原始错误只进日志 —— 界面上不出现任何内部参数
             log.exception("控制台接口 %s 出错", route)
             return handler.send_json(
-                {"ok": False, "error": f"{type(e).__name__}: {e}"}, 500)
+                {"ok": False, "error": "服务器内部出错，请稍后重试"}, 500)
 
         return handler.send_json({"ok": False, "error": "not found"}, 404)
 

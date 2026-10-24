@@ -1392,8 +1392,49 @@ class TestTaskApply(unittest.TestCase):
         r = FakeActionRouter(wan_id="")
         res = tk.apply(r, {"kind": "redial"})
         self.assertFalse(res["ok"])
-        self.assertIn("WAN", res["msg"])
+        self.assertIn("无法重拨", res["msg"])
         self.assertEqual(r.posts, [])
+
+    def test_messages_never_leak_internal_params(self):
+        """界面上（上次结果列 / 右下角弹窗）不能出现接口路径、字段名、连接 ID。"""
+        bad = ("Path", "InternetGatewayDevice", "WANPPPConnection", "WANDevice",
+               "wlanradio", "channelinfo", "PowerMode", "ntwk/", "api/")
+
+        r = FakeActionRouter(wan_id="InternetGatewayDevice.WANDevice.1."
+                                    "WANConnectionDevice.1.WANPPPConnection.1.")
+        for task in ({"kind": "reboot"},
+                     {"kind": "redial"},
+                     {"kind": "wifi_power", "params": {"power_mode": 2}},
+                     {"kind": "channel"}):
+            res = tk.apply(r, task)
+            self.assertTrue(res["ok"], res)
+            for w in bad:
+                self.assertNotIn(w, res["msg"], "%s 的消息泄露了 %s" % (task["kind"], w))
+
+        # 失败路径同样不能带内部信息（这里没有 wan ID，走的是失败分支）
+        res = tk.apply(FakeActionRouter(wan_id=""), {"kind": "redial"})
+        for w in bad:
+            self.assertNotIn(w, res["msg"])
+
+    def test_user_facing_error(self):
+        """异常一律翻成人话：不出现异常类名、接口路径、原始响应。"""
+        class NotLoggedIn(Exception):
+            pass
+
+        class SessionExpired(Exception):
+            pass
+
+        class RouterError(Exception):
+            pass
+
+        self.assertIn("重新登录", tk.user_facing_error(NotLoggedIn("x")))
+        self.assertIn("重新登录", tk.user_facing_error(SessionExpired("x")))
+        for exc in (RouterError("ntwk/wan 返回非 JSON (500): <html>"),
+                    KeyError("power_mode"),
+                    OSError("boom")):
+            msg = tk.user_facing_error(exc)
+            for w in ("RouterError", "KeyError", "OSError", "ntwk/", "500", "power_mode"):
+                self.assertNotIn(w, msg)
 
     def test_wifi_power_minimal_write(self):
         r = FakeActionRouter(power=1)
@@ -1557,7 +1598,9 @@ class TestTaskScheduler(unittest.TestCase):
             self.assertFalse(res["ok"])
             task = s.view()["tasks"][0]
             self.assertFalse(task["last_ok"])
-            self.assertIn("路由器掉线", task["last_msg"])
+            # 界面只显示人话；原始异常（"路由器掉线"）只进容器日志
+            self.assertEqual(task["last_msg"], "执行出错，请稍后重试")
+            self.assertNotIn("路由器掉线", task["last_msg"])
             self.assertIsNone(s.tick(now + 5))       # 失败也不重试
 
     def test_write_before_send(self):

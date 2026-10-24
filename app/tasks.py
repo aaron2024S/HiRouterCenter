@@ -167,7 +167,7 @@ def clean_task(raw: dict, now: float | None = None) -> dict:
         except (TypeError, ValueError):
             raise ValueError("Wi-Fi 功率模式要选 睡眠模式 / 一般模式 / 穿墙模式 之一")
         if pm not in POWER_MODES:
-            raise ValueError("功率模式只能是 0(睡眠模式) / 1(一般模式) / 2(穿墙模式)")
+            raise ValueError("功率模式只能选上面三档之一")
         params["power_mode"] = pm
 
     out = {
@@ -303,10 +303,17 @@ def set_power_mode(router, mode: int) -> dict:
         router.post("wlanradio", full)
         back = router.get("wlanradio")
         if isinstance(back, dict) and int(back.get("PowerMode", -1)) == mode:
-            return {"ok": True, "msg": "已切到「%s」（整字段写回）" % POWER_MODES[mode]}
+            # 「整字段写回」是内部实现细节，只进日志，不显示给用户
+            log.info("功率模式最小写没生效，已用完整字段写回成功")
+            return {"ok": True, "msg": "已切到「%s」" % POWER_MODES[mode]}
 
     got = back.get("PowerMode") if isinstance(back, dict) else None
-    return {"ok": False, "msg": "切换没生效，回读功率档位仍是 %s" % got}
+    try:
+        got = int(got)
+    except (TypeError, ValueError):
+        got = None
+    tail = ("当前仍是「%s」" % POWER_MODES[got]) if got in POWER_MODES else "档位没有变化"
+    return {"ok": False, "msg": "切换没生效，" + tail}
 
 
 def optimize_channel(router) -> dict:
@@ -337,17 +344,32 @@ def apply(router, task: dict) -> dict:
         wan = router.get("wan")
         path = find_wan_id(wan)
         if not path:
-            keys = wan_keys(wan)
-            return {"ok": False,
-                    "msg": "读不到当前 WAN 连接 ID，无法重拨（wan 返回的字段：%s）"
-                           % ("、".join(keys) or "空")}
+            # 拿到的字段名只写日志（排错用），界面上不出现任何内部参数
+            log.warning("读不到 WAN 连接 ID，wan 返回的字段：%s",
+                        "、".join(wan_keys(wan)) or "空")
+            return {"ok": False, "msg": "读不到当前的宽带连接，无法重拨"}
         router.post("wan", {"Path": path}, action="reconnect")
-        return {"ok": True, "msg": "已发起重新拨号（%s），十来秒后恢复" % path}
+        log.info("重新拨号：Path=%s", path)
+        return {"ok": True, "msg": "已发起重新拨号，十来秒后恢复"}
     if kind == "wifi_power":
         return set_power_mode(router, int((task.get("params") or {})["power_mode"]))
     if kind == "channel":
         return optimize_channel(router)
     return {"ok": False, "msg": "未知任务类型"}
+
+
+def user_facing_error(exc: BaseException) -> str:
+    """把内部异常翻成一句人话。
+
+    界面上「上次结果」列和右下角弹窗显示的都是这里返回的句子 ——
+    **不出现接口路径、字段名、异常类名、原始响应**，那些只进容器日志。
+    """
+    name = type(exc).__name__
+    if name in ("NotLoggedIn", "SessionExpired"):
+        return "路由器登录已失效，请到「同步与设置」里重新登录路由器"
+    if name == "RouterError":
+        return "路由器没有按预期回应，请稍后重试"
+    return "执行出错，请稍后重试"
 
 
 # --------------------------------------------------------------------------
@@ -515,7 +537,9 @@ class Tasks:
             with self._guard():
                 res = apply(self._get_router(), task)
         except Exception as e:                       # noqa: BLE001
-            res = {"ok": False, "msg": "%s: %s" % (type(e).__name__, e)}
+            # 完整堆栈进日志；界面上只给一句人话（不含任何内部参数）
+            log.exception("计划任务「%s」执行出错", task["name"])
+            res = {"ok": False, "msg": user_facing_error(e)}
 
         with self._lock:
             task["last_ok"] = bool(res.get("ok"))
