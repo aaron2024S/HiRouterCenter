@@ -231,6 +231,20 @@ tr.offrow td{opacity:.62}
 .tkbtns .danger{color:var(--err);border-color:var(--btn-line)}
 .tkbtns .danger:hover{border-color:var(--err);background:transparent}
 .swmini{display:inline-flex;align-items:center;gap:6px;font-size:12px;color:var(--muted)}
+/* 计划任务：唤醒设备的多选列表 */
+.tkdevs{max-height:216px;overflow-y:auto;border:1px solid var(--line);
+  border-radius:8px;padding:4px}
+.tkdev{display:flex;align-items:center;gap:8px;padding:6px 8px;border-radius:6px;
+  cursor:pointer;font-size:12.5px}
+.tkdev:hover{background:var(--bg)}
+.tkdev input{flex:none;width:15px;height:15px;margin:0;cursor:pointer;accent-color:var(--accent)}
+.tkdev .dn{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.tkdev .dm{flex:none;font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+  font-size:11.5px;color:var(--muted)}
+.tkdev .ds{flex:none;font-size:11px;color:var(--muted);width:26px;text-align:right}
+.tkdev .ds.on{color:var(--ok)}
+.tkdevs .none{padding:10px 8px;color:var(--muted);font-size:12.5px;line-height:1.6}
+#tkDevCnt{float:right;font-weight:400;color:var(--muted);font-size:12px}
 .tkoff td{opacity:.55}
 .tkoff td.tktog{opacity:1}
 /* 计划任务表：固定列宽，「上次结果」吃掉剩余空间并在格内折行 ——
@@ -250,7 +264,7 @@ tr.offrow td{opacity:.62}
   table.tktbl td.tkres{overflow-wrap:anywhere}
   /* 列宽由列说了算，格子里的 span 不许再撑出去 */
   table.tktbl td.tkres span{max-width:100%}
-  table.tktbl th:nth-child(1){width:76px}    /* 任务 */
+  table.tktbl th:nth-child(1){width:84px}    /* 任务：5 个字的名字也能单行放下 */
   table.tktbl th:nth-child(2){width:112px}   /* 类型 */
   table.tktbl th:nth-child(3){width:150px}   /* 执行时间：「每天 08:30 → 穿墙模式」单行放得下 */
   table.tktbl th:nth-child(4){width:92px}    /* 下次 */
@@ -529,6 +543,7 @@ tr.offrow td{opacity:.62}
       <option value="redial">重新拨号（重连 WAN）</option>
       <option value="wifi_power">Wi-Fi 功率模式</option>
       <option value="channel">信道优化</option>
+      <option value="wake">唤醒设备（网络唤醒）</option>
     </select>
     <label class="flab" id="tkPowerLab" style="display:none">切换到</label>
     <select id="tkPower" style="display:none">
@@ -536,6 +551,8 @@ tr.offrow td{opacity:.62}
       <option value="1">一般模式（出厂默认）</option>
       <option value="2">穿墙模式（覆盖最强）</option>
     </select>
+    <label class="flab" id="tkDevLab" style="display:none">选择设备<span id="tkDevCnt"></span></label>
+    <div id="tkDevBox" class="tkdevs" style="display:none"></div>
     <label class="flab">任务名（可留空）</label>
     <input type="text" id="tkName" placeholder="例如：每晚重启" autocomplete="off">
     <label class="flab">执行时间</label>
@@ -1523,7 +1540,9 @@ tr.offrow td{opacity:.62}
             "（重试就等于反复重启）。",
     redial: "到点让路由器重新拨号，等于「我要上网」页那个「重新连接」按钮。断网十来秒。",
     wifi_power: "到点切换 Wi-Fi 功率档位。切到「睡眠模式」会明显缩小覆盖范围，适合夜里。",
-    channel: "到点让路由器自动挑一个更空闲的信道。"
+    channel: "到点让路由器自动挑一个更空闲的信道。",
+    wake: "到点给选中的设备发网络唤醒包（WOL）。设备需要开启网络唤醒；" +
+          "只负责发出去，不判断有没有开机成功。"
   };
 
   function tkCellText(v) {
@@ -1689,16 +1708,90 @@ tr.offrow td{opacity:.62}
     });
   }
 
+  // ---- 唤醒任务：设备多选 ----
+  var tkHosts = null;        // 本次弹窗内的设备列表缓存
+  var tkPickedMacs = [];     // 编辑时已勾选的 MAC（归一后的小写十六进制）
+
+  function tkMacKey(m) { return String(m || "").replace(/[^0-9a-f]/gi, "").toLowerCase(); }
+
+  function tkDevCount() {
+    var n = document.querySelectorAll("#tkDevBox input:checked").length;
+    document.getElementById("tkDevCnt").textContent =
+      n ? "已选 " + n + " 台" : "一台都没选";
+  }
+
+  function tkDevNote(text) {
+    var box = document.getElementById("tkDevBox");
+    box.textContent = "";
+    var d = document.createElement("div");
+    d.className = "none";
+    d.textContent = text;
+    box.appendChild(d);
+    tkDevCount();
+  }
+
+  function tkRenderDevices(list) {
+    var box = document.getElementById("tkDevBox");
+    box.textContent = "";
+    if (!list.length) { tkDevNote("路由器设备列表是空的。"); return; }
+    list.forEach(function (h) {
+      var lab = document.createElement("label");
+      lab.className = "tkdev";
+      var cb = document.createElement("input");
+      cb.type = "checkbox";
+      cb.value = h.mac;
+      cb.checked = tkPickedMacs.indexOf(tkMacKey(h.mac)) >= 0;
+      cb.addEventListener("change", tkDevCount);
+      var nm = document.createElement("span");
+      nm.className = "dn";
+      nm.textContent = h.name || "（未命名设备）";
+      var mac = document.createElement("span");
+      mac.className = "dm";
+      mac.textContent = h.mac;
+      var st = document.createElement("span");
+      st.className = "ds" + (h.active ? " on" : "");
+      st.textContent = h.active ? "在线" : "离线";
+      lab.appendChild(cb); lab.appendChild(nm); lab.appendChild(mac); lab.appendChild(st);
+      box.appendChild(lab);
+    });
+    tkDevCount();
+  }
+
+  function tkLoadDevices() {
+    if (tkHosts) { tkRenderDevices(tkHosts); return; }
+    tkDevNote("正在读取设备列表…");
+    api("/api/router/hosts").then(function (j) {
+      if (!j.ok) {
+        tkDevNote("读不到设备列表（" + (j.error || "路由器未登录") +
+                  "）。到「同步与设置」重新登录路由器后再试。");
+        return;
+      }
+      // 在线的排前面，同状态按名字排，找设备快一点
+      tkHosts = (j.hosts || []).slice().sort(function (a, b) {
+        if (!!b.active !== !!a.active) { return b.active ? 1 : -1; }
+        return String(a.name || "").localeCompare(String(b.name || ""), "zh");
+      });
+      tkRenderDevices(tkHosts);
+    }).catch(function (e) { tkDevNote("读取设备列表失败：" + e); });
+  }
+
   function tkKindChange() {
     var k = document.getElementById("tkKind").value;
-    var show = (k === "wifi_power");
-    document.getElementById("tkPowerLab").style.display = show ? "" : "none";
-    document.getElementById("tkPower").style.display = show ? "" : "none";
+    var showP = (k === "wifi_power");
+    var showD = (k === "wake");
+    document.getElementById("tkPowerLab").style.display = showP ? "" : "none";
+    document.getElementById("tkPower").style.display = showP ? "" : "none";
+    document.getElementById("tkDevLab").style.display = showD ? "" : "none";
+    document.getElementById("tkDevBox").style.display = showD ? "" : "none";
+    if (showD) { tkLoadDevices(); }
     document.getElementById("tkTip").textContent = TK_TIP[k] || "";
   }
 
   function tkOpen(task) {
     tkEditing = task ? task.id : null;
+    tkHosts = null;
+    tkPickedMacs = ((task && task.params && task.params.devices) || [])
+      .map(function (d) { return tkMacKey(d.mac); });
     document.getElementById("tkTitle").textContent = task ? "编辑计划任务" : "添加计划任务";
     document.getElementById("tkKind").value = task ? task.kind : "reboot";
     document.getElementById("tkName").value = task ? task.name : "";
@@ -1725,6 +1818,17 @@ tr.offrow td{opacity:.62}
     };
     if (body.kind === "wifi_power") {
       body.params.power_mode = parseInt(document.getElementById("tkPower").value, 10);
+    } else if (body.kind === "wake") {
+      var picked = [];
+      document.querySelectorAll("#tkDevBox input:checked").forEach(function (cb) {
+        var h = (tkHosts || []).filter(function (x) { return x.mac === cb.value; })[0] || {};
+        picked.push({ mac: cb.value, name: h.name || "", ipv4: h.ipv4 || "" });
+      });
+      if (!picked.length) {
+        document.getElementById("tkMsg").textContent = "至少选择一台要唤醒的设备";
+        return;
+      }
+      body.params.devices = picked;
     }
     // 编辑时保留原有开关状态与执行历史，否则「已执行过」的记录会丢、
     // 已停用的任务会被悄悄重新启用。

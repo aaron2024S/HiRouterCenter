@@ -1383,6 +1383,35 @@ class TestTaskModel(unittest.TestCase):
         with self.assertRaises(ValueError):
             tk.clean_task({"kind": "reboot", "at": "04:30", "name": "x" * 31})
 
+    def test_clean_wake_devices(self):
+        """MAC 归一成 AA:BB:..、重复的去掉、脏 IPv4 丢掉；顺序保持不变。"""
+        t = tk.clean_task({"kind": "wake", "at": "07:30", "params": {"devices": [
+            {"mac": "3c-7c-3f-11-22-33", "name": "书房台式机", "ipv4": "192.168.3.117"},
+            {"mac": "3C:7C:3F:11:22:33", "name": "重复的那条"},
+            {"mac": "a0b1c2d3e4f5", "name": "客厅电视", "ipv4": "not-an-ip"},
+        ]}})
+        devs = t["params"]["devices"]
+        self.assertEqual([d["mac"] for d in devs],
+                         ["3C:7C:3F:11:22:33", "A0:B1:C2:D3:E4:F5"])
+        self.assertEqual(devs[0]["name"], "书房台式机")
+        self.assertEqual(devs[1]["ipv4"], "")
+        self.assertEqual(tk.describe(t), "每天 07:30 → 唤醒 2 台")
+
+    def test_clean_wake_rejects_empty(self):
+        for devs in (None, [], [{"mac": ""}], [{"mac": "zz:zz"}]):
+            with self.assertRaises(ValueError, msg=str(devs)):
+                tk.clean_task({"kind": "wake", "at": "07:30",
+                               "params": {"devices": devs}})
+
+    def test_clean_wake_max_devices(self):
+        many = [{"mac": "3C:7C:3F:11:22:%02X" % i} for i in range(21)]
+        with self.assertRaises(ValueError):
+            tk.clean_task({"kind": "wake", "at": "07:30",
+                           "params": {"devices": many}})
+        ok = tk.clean_task({"kind": "wake", "at": "07:30",
+                            "params": {"devices": many[:20]}})
+        self.assertEqual(len(ok["params"]["devices"]), 20)
+
     def test_roundtrip_persistence(self):
         with tempfile.TemporaryDirectory() as d:
             path = os.path.join(d, "tasks.json")
@@ -1461,6 +1490,56 @@ class TestTaskApply(unittest.TestCase):
         res = tk.apply(FakeActionRouter(wan_id=""), {"kind": "redial"})
         for w in bad:
             self.assertNotIn(w, res["msg"])
+
+    # ---- 唤醒设备（多台，间隔发） ----
+
+    WAKE_DEVS = [
+        {"mac": "3C:7C:3F:11:22:33", "name": "书房台式机", "ipv4": "192.168.3.117"},
+        {"mac": "A0:B1:C2:D3:E4:F5", "name": "客厅电视", "ipv4": ""},
+        {"mac": "11:22:33:44:55:66", "name": "", "ipv4": ""},
+    ]
+
+    def test_wake_sends_each_device_with_gap(self):
+        """逐台发、台与台之间停一下；整个过程不碰路由器（router 传 None）。"""
+        calls, sleeps = [], []
+
+        def fake_send(mac, ipv4=""):
+            calls.append((mac, ipv4))
+            return {"ok": True, "sent": 6}
+
+        with mock.patch.object(tk.wol, "send", fake_send), \
+                mock.patch.object(tk.time, "sleep", lambda s: sleeps.append(s)):
+            res = tk.apply(None, {"kind": "wake",
+                                  "params": {"devices": self.WAKE_DEVS}})
+
+        self.assertTrue(res["ok"])
+        self.assertEqual(len(calls), 3)
+        self.assertEqual([c[0] for c in calls], [d["mac"] for d in self.WAKE_DEVS])
+        self.assertEqual(calls[0][1], "192.168.3.117")   # ipv4 用来算定向广播
+        self.assertEqual(sleeps, [tk.WAKE_GAP, tk.WAKE_GAP])   # 3 台只停 2 次
+        self.assertIn("3 台", res["msg"])
+
+    def test_wake_partial_failure_is_reported(self):
+        def fake_send(mac, ipv4=""):
+            return {"ok": mac != "A0:B1:C2:D3:E4:F5", "sent": 6,
+                    "error": "权限不足"}
+
+        with mock.patch.object(tk.wol, "send", fake_send), \
+                mock.patch.object(tk.time, "sleep", lambda s: None):
+            res = tk.apply(None, {"kind": "wake",
+                                  "params": {"devices": self.WAKE_DEVS}})
+        self.assertFalse(res["ok"])
+        self.assertIn("3 台里 2 台", res["msg"])
+
+    def test_wake_total_failure_hints_network(self):
+        with mock.patch.object(tk.wol, "send",
+                               lambda m, ipv4="": {"ok": False, "error": "x"}), \
+                mock.patch.object(tk.time, "sleep", lambda s: None):
+            res = tk.apply(None, {"kind": "wake",
+                                  "params": {"devices": self.WAKE_DEVS}})
+        self.assertFalse(res["ok"])
+        self.assertIn("一个包都没发出去", res["msg"])
+        self.assertIn("网线", res["msg"])
 
     def test_user_facing_error(self):
         """异常一律翻成人话：不出现异常类名、接口路径、原始响应。"""
@@ -1623,6 +1702,23 @@ class TestTaskScheduler(unittest.TestCase):
             s.toggle(tid, False)
             self.assertIsNone(s.tick(_epoch(2026, 10, 24, 4, 30)))
             self.assertFalse(r.rebooted)
+
+    def test_wake_task_runs_without_router_and_skips_quiet(self):
+        """唤醒任务不碰路由器（拿 router 就报错也照样跑），也不进静默期。"""
+        with tempfile.TemporaryDirectory() as d:
+            def no_router():
+                raise AssertionError("唤醒任务不应该去拿路由器连接")
+
+            s = tk.Tasks(no_router, os.path.join(d, "tasks.json"), clock=_task_clock)
+            s.upsert({"kind": "wake", "at": "04:30",
+                      "params": {"devices": [
+                          {"mac": "3C:7C:3F:11:22:33", "name": "书房台式机"}]}})
+            with mock.patch.object(tk.wol, "send",
+                                   lambda m, ipv4="": {"ok": True, "sent": 6}):
+                res = s.tick(_epoch(2026, 10, 24, 4, 30))
+            self.assertTrue(res["ok"])
+            self.assertIn("1 台", res["msg"])
+            self.assertEqual(s.quiet_left(), 0)      # 不占静默期
 
     def _tasks_at(self, d, router, at):
         """造一个「现在恰好是 at」的 Tasks（clock 只影响计划生效时刻）。"""

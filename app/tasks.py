@@ -19,16 +19,20 @@ Q7 的「重启计划」「定时重拨」两个页面在 Web 端被固件裁掉
 
 顺带说明「静默期」为什么按类型分档：重启 240 秒（固件重启 + 拨号 + Wi-Fi 起来）、
 重拨 150 秒（前端自己等 11 秒再刷新，实测重拨就十来秒）、信道优化 60 秒
-（Wi-Fi 要重开）、功率模式 20 秒（几乎无感）。
+（Wi-Fi 要重开）、功率模式 20 秒（几乎无感）。「唤醒设备」是 0 秒 ——
+它只往局域网发 WOL 广播包，一个请求都不打给路由器，既不占同步锁也不影响同步。
 """
 from __future__ import annotations
 
+import ipaddress
 import json
 import logging
 import os
 import re
 import threading
 import time
+
+from . import discover, wol
 
 log = logging.getLogger("ipv6sync.tasks")
 
@@ -37,18 +41,23 @@ KINDS = {
     "redial": "重新拨号",
     "wifi_power": "Wi-Fi 功率模式",
     "channel": "信道优化",
+    "wake": "唤醒设备",
 }
 
 POWER_MODES = {0: "睡眠模式", 1: "一般模式", 2: "穿墙模式"}
 
 WINDOW = 180.0          # 计划点之后多久之内还算「到点」
 MAX_TASKS = 32          # 上限，防止误操作灌进来几百条
+MAX_WAKE_DEVS = 20      # 一条唤醒任务最多选几台设备
+WAKE_GAP = 1.0          # 多台设备之间间隔几秒再发（个别老网卡对连续广播敏感）
 
 QUIET = {               # 执行后多久内不碰路由器、不判定同步失败
     "reboot": 240.0,
     "redial": 150.0,
     "wifi_power": 20.0,
     "channel": 60.0,
+    # 唤醒只往局域网发广播包，一个请求都不打给路由器 —— 不需要静默期
+    "wake": 0.0,
 }
 
 _WEEK = {1: "一", 2: "二", 3: "三", 4: "四", 5: "五", 6: "六", 7: "日"}
@@ -149,6 +158,47 @@ def _new_id(now: float | None = None) -> str:
     return "t%x" % base
 
 
+def dash_mac(norm: str) -> str:
+    """12 位十六进制 → AA:BB:CC:DD:EE:FF（只为了好看；wol 里反正会再归一）。"""
+    return ":".join(norm[i:i + 2] for i in range(0, 12, 2)).upper()
+
+
+def _clean_devices(params: dict) -> list[dict]:
+    """唤醒任务的设备清单：归一 MAC、去重、限台数。
+
+    存下来的只是「MAC + 设备名快照 + 当时的 IPv4」—— 设备名快照是为了
+    列表上好看（路由器改名后会被实时名字覆盖），IPv4 用来算定向广播地址。
+    """
+    raw = params.get("devices")
+    if not isinstance(raw, list):
+        raise ValueError("至少选择一台要唤醒的设备")
+    out: list[dict] = []
+    seen: set[str] = set()
+    for item in raw:
+        if not isinstance(item, dict):
+            continue
+        norm = discover.norm_mac(str(item.get("mac") or ""))
+        if len(norm) != 12:
+            raise ValueError("设备 MAC 格式不对：" + str(item.get("mac") or "")[:20])
+        if norm in seen:
+            continue                      # 同一台勾了两次，去重就行，不报错
+        seen.add(norm)
+        ip = str(item.get("ipv4") or "").strip()
+        if ip:
+            try:
+                ipaddress.IPv4Address(ip)
+            except ValueError:
+                ip = ""                   # 脏值直接丢掉，别拿去算广播地址
+        out.append({"mac": dash_mac(norm),
+                    "name": str(item.get("name") or "").strip()[:32],
+                    "ipv4": ip[:15]})
+    if not out:
+        raise ValueError("至少选择一台要唤醒的设备")
+    if len(out) > MAX_WAKE_DEVS:
+        raise ValueError("一条任务最多唤醒 %d 台设备" % MAX_WAKE_DEVS)
+    return out
+
+
 def clean_task(raw: dict, now: float | None = None) -> dict:
     """校验并规范化一条任务。坏值一律抛 ValueError，不静默兜底。"""
     if not isinstance(raw, dict):
@@ -173,6 +223,8 @@ def clean_task(raw: dict, now: float | None = None) -> dict:
         if pm not in POWER_MODES:
             raise ValueError("功率模式只能选上面三档之一")
         params["power_mode"] = pm
+    elif kind == "wake":
+        params["devices"] = _clean_devices(raw.get("params") or {})
 
     out = {
         "id": str(raw.get("id") or "").strip() or _new_id(now),
@@ -209,6 +261,8 @@ def describe(task: dict) -> str:
     if task.get("kind") == "wifi_power":
         when += " → " + POWER_MODES.get(
             (task.get("params") or {}).get("power_mode"), "?")
+    elif task.get("kind") == "wake":
+        when += " → 唤醒 %d 台" % len((task.get("params") or {}).get("devices") or [])
     return when
 
 
@@ -343,6 +397,52 @@ def optimize_channel(router) -> dict:
     return {"ok": True, "msg": "已发起一键优化信道"}
 
 
+def wake_devices(devices: list[dict]) -> dict:
+    """逐台发 WOL 魔术包，台与台之间隔 WAKE_GAP 秒。
+
+    为什么间隔而不是一起发：一是让广播别挤在同一个瞬间（老网卡/省电网卡对
+    连续广播不敏感，间隔反而更容易被收到），二是万一某台发失败，日志顺序
+    清晰，事后能对上是哪一台。
+
+    **不判定设备有没有起来** —— 与手动唤醒的约定一致：开机要多久、路由器
+    设备表什么时候刷新，都不是我们能控制的，误报比不报更糟。
+    """
+    ok: list[str] = []
+    bad: list[dict] = []
+    for i, d in enumerate(devices):
+        if i:
+            time.sleep(WAKE_GAP)
+        label = d.get("name") or d.get("mac") or "未知设备"
+        try:
+            res = wol.send(d.get("mac") or "", d.get("ipv4") or "")
+        except Exception as e:                    # noqa: BLE001
+            log.exception("向 %s 发唤醒包出错", label)
+            res = {"ok": False, "error": str(e)}
+        if res.get("ok"):
+            ok.append(label)
+            log.info("已向 %s（%s）发送唤醒包：%d 个广播", label, d.get("mac"),
+                     res.get("sent") or 0)
+        else:
+            bad.append(d)
+            log.warning("向 %s（%s）发送唤醒包失败：%s", label, d.get("mac"),
+                        res.get("error"))
+
+    total = len(devices)
+    if not bad:
+        return {"ok": True, "msg": "已向 %d 台设备发出唤醒包" % total}
+    if not ok:
+        # 一个都没发出去，多半是容器网络不是 host、或 NAS 走 Wi-Fi 不在广播域里。
+        # 这条排障提示只进日志，界面上只给用户能动手的那一句。
+        log.warning("唤醒包一个都没发出去 —— 检查容器是否 host 网络、"
+                    "NAS 是否网线接入同一局域网")
+        return {"ok": False,
+                "msg": "%d 台设备一个包都没发出去：确认 NAS 用网线接在"
+                       "同一个局域网（Wi-Fi 接入或容器网络隔离都发不出去）" % total}
+    return {"ok": False,
+            "msg": "%d 台里 %d 台已发出，%d 台没发出去（哪台失败看容器日志）"
+                   % (total, len(ok), len(bad))}
+
+
 def apply(router, task: dict) -> dict:
     """执行一条任务。返回 {"ok": bool, "msg": str}，不抛业务异常。"""
     kind = task.get("kind")
@@ -365,6 +465,9 @@ def apply(router, task: dict) -> dict:
         return set_power_mode(router, int((task.get("params") or {})["power_mode"]))
     if kind == "channel":
         return optimize_channel(router)
+    if kind == "wake":
+        # 这一条完全不碰 router（传 None 也不会用到）
+        return wake_devices((task.get("params") or {}).get("devices") or [])
     return {"ok": False, "msg": "未知任务类型"}
 
 
@@ -562,8 +665,13 @@ class Tasks:
             self._save_locked()
 
         try:
-            with self._guard():
-                res = apply(self._get_router(), task)
+            if task.get("kind") == "wake":
+                # 唤醒只往局域网发广播，一个请求都不打给路由器 —— 不占同步锁，
+                # 同步正卡在路由器请求上时也能按点发出去。
+                res = apply(None, task)
+            else:
+                with self._guard():
+                    res = apply(self._get_router(), task)
         except Exception as e:                       # noqa: BLE001
             # 完整堆栈进日志；界面上只给一句人话（不含任何内部参数）
             log.exception("计划任务「%s」执行出错", task["name"])
@@ -577,7 +685,10 @@ class Tasks:
         if res.get("ok"):
             # 手动执行也要进静默期：否则用户点完「立即重启」，下一轮同步立刻
             # 连不上路由器，就会一路累计失败次数、甚至推送告警。
-            self._set_quiet(QUIET.get(task["kind"], 60.0))
+            # 唤醒是 0 秒，不进静默期。
+            quiet = QUIET.get(task["kind"], 0.0)
+            if quiet > 0:
+                self._set_quiet(quiet)
             log.info("计划任务「%s」执行成功：%s", task["name"], res.get("msg"))
         else:
             log.warning("计划任务「%s」执行失败：%s", task["name"], res.get("msg"))
