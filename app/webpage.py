@@ -311,16 +311,11 @@ tr.offrow td{opacity:.62}
         style="vertical-align:-2px" aria-hidden="true"><path fill="none"
         stroke="currentColor" stroke-width="1.8" stroke-linecap="round"
         d="M13.5 8a5.5 5.5 0 1 1-1.6-3.9M13.5 1.8v2.7h-2.7"/></svg> 刷新</button></h2>
-      <p class="desc">到点由本程序去按路由器上对应的那个按钮 —— <b>计划存在这台机器上，
-        路由器里什么都不写</b>。路由器固件把「重启计划」「定时重拨」两个页面裁掉了，
-        所以定时只能在这里做。正因为如此：<b>容器停了任务就不会执行</b>，
-        停容器期间到点的任务会记一条「已错过」，起来后<b>不补跑</b>。</p>
       <div class="toolbar" style="margin-bottom:10px">
         <button id="btnTaskAdd" class="primary">＋ 添加任务</button>
         <span class="desc" style="margin:0" id="taskMeta"></span>
       </div>
       <div id="taskBox"></div>
-      <p class="devnote" id="taskNote"></p>
     </div>
   </div><!-- /tab-tasks -->
 
@@ -1456,9 +1451,6 @@ tr.offrow td{opacity:.62}
       sc.appendChild(t);
       box.appendChild(sc);
     }
-    document.getElementById("taskNote").textContent =
-      "到点后只有一次尝试，失败不自动重试（重试重启等于反复断网）。" +
-      "若是错过了计划点（容器当时没运行），只会记一条「已错过」，不会补跑。";
   }
 
   function loadTasks() {
