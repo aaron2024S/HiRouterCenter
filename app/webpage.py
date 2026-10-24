@@ -519,6 +519,10 @@ html[data-theme="light"] .tpick-mask{background:rgba(30,34,56,.34)}
 /* 关于页「维护」 */
 .maint-row{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
 
+/* 设备卡：IPv4 行 + 离线设备的最后在线时间 */
+.dev-meta{display:flex;flex-direction:column;gap:4px}
+.laston{display:flex;align-items:center;gap:5px;font-size:11.5px;color:var(--text-5)}
+.laston .i{width:12px;height:12px;opacity:.85}
 /* 手机端筛选行：五个标签不再折成三行，横向滑动即可，避免「儿童上网」独占一行 */
 @media(max-width:640px){
   .filterrow .chips{flex-wrap:nowrap;overflow-x:auto;scrollbar-width:none;flex:1 1 auto;min-width:0}
@@ -952,13 +956,13 @@ html[data-theme="light"] .tpick-mask{background:rgba(30,34,56,.34)}
           <div class="tblwrap">
             <table class="tbl tbl-fixed">
               <thead><tr>
-                <th style="width:160px">服务名称</th>
-                <th style="width:200px">设备</th>
-                <th style="width:110px">放行端口</th>
-                <th style="width:150px">允许来源</th>
-                <th style="width:100px">维护方式</th>
-                <th style="width:130px">当前状态</th>
-                <th style="width:120px"></th>
+                <th style="width:150px">服务名称</th>
+                <th style="width:170px">设备</th>
+                <th style="width:200px">当前地址</th>
+                <th style="width:100px">放行端口</th>
+                <th style="width:130px">允许来源</th>
+                <th style="width:120px">当前状态</th>
+                <th style="width:110px"></th>
               </tr></thead>
               <tbody id="ruleRows"></tbody>
             </table>
@@ -975,7 +979,7 @@ html[data-theme="light"] .tpick-mask{background:rgba(30,34,56,.34)}
                 <th>本机 / 地址</th>
                 <th style="width:90px">端口</th>
                 <th style="width:140px">允许来源</th>
-                <th style="width:80px"></th>
+                <th style="width:140px"></th>
               </tr></thead>
               <tbody id="entRows"></tbody>
             </table>
@@ -1558,6 +1562,27 @@ function renderDevices() {
     if (d.kids) tags.innerHTML += '<span class="badge badge-accent">儿童上网</span>';
     if (tags.innerHTML) card.appendChild(tags);
 
+    /* IPv4（点击复制）+ 离线设备的最后在线时间 —— 改版时丢掉的两个字段 */
+    const meta = el('div', 'dev-meta');
+    if (d.ipv4) {
+      const b4 = el('button', 'v6', svgI('copy') + '<span>' + escHtml(d.ipv4) + '</span>');
+      b4.title = '点击复制 IPv4 地址';
+      b4.addEventListener('click', () => {
+        const old = b4.innerHTML;
+        if (copyText(d.ipv4)) {
+          b4.classList.add('copied');
+          b4.innerHTML = svgI('check') + '<span>已复制</span>';
+          toast('已复制到剪贴板', d.ipv4, 'check');
+          setTimeout(() => { b4.classList.remove('copied'); b4.innerHTML = old; }, 1400);
+        } else toast('复制失败', '长按地址手动复制', 'alert');
+      });
+      meta.appendChild(b4);
+    }
+    if (!d.active && d.offline_at) {
+      meta.appendChild(el('div', 'laston', svgI('history') + '最后在线 ' + escHtml(d.offline_at)));
+    }
+    if (meta.children.length) card.appendChild(meta);
+
     const v6 = el('div', 'dev-v6');
     const addrs = d.ipv6 || [];
     if (!addrs.length) v6.innerHTML = '<span class="sub" style="font-size:11.5px">没有 IPv6 地址</span>';
@@ -1796,21 +1821,35 @@ function renderFirewall() {
   // 基础名、基础名@N、各自可再带 -端口。**按实读条目判**，不按设备在线 ——
   // 设备离线时条目仍保留在路由器上，照样是生效的；不绑定设备的规则（如 NAS）更没有「离线」一说。
   const escRe = s => String(s).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-  const onRouter = name => (wl.entries || []).some(e =>
+  const ownerOf = name => {
+    if (!name) return '';
+    return (wl.rules || []).some(r => r.name && new RegExp('^' + escRe(r.name) + '(@\\d+)?(-\\d+)?$')
+      .test(String(name))) ? name : '';
+  };
+  // 规则在路由器上对应哪些条目（基础名 / 基础名@N / 各自可带 -端口）
+  const entriesOf = name => (wl.entries || []).filter(e =>
     !!name && new RegExp('^' + escRe(name) + '(@\\d+)?(-\\d+)?$').test(String(e.Name || '')));
+  const onRouter = name => entriesOf(name).length > 0;
   const tb = $('#ruleRows');
   tb.innerHTML = '';
   (wl.rules || []).forEach(r => {
     const h = byMac[String(r.mac || '').toUpperCase()];
     const tr = document.createElement('tr');
-    const synced = onRouter(r.name);
+    const mine = entriesOf(r.name);
+    const synced = mine.length > 0;
     const devOff = !synced && r.mac && h && !h.active;
+    // 当前写进路由器的地址：去重后逐条显示，点击即复制
+    const ips = [...new Set(mine.map(e => e.LocalIp || e.local_ip || '').filter(Boolean))];
+    const addrCell = ips.length
+      ? ips.map(ip => '<button class="v6" style="margin-bottom:3px" data-ip="' + escAttr(ip) + '"'
+        + ' title="点击复制这条地址">' + svgI('copy') + '<span>' + escHtml(ip) + '</span></button>').join('')
+      : '<span class="sub">还没写入</span>';
     tr.innerHTML = '<td><b style="font-weight:600">' + escHtml(r.name) + '</b></td>'
       + '<td>' + (h ? escHtml(h.name) + '<div class="mono" style="font-size:11px;color:var(--text-5)">'
         + escHtml(r.mac) + '</div>' : '<span class="sub">（不绑定设备）</span>') + '</td>'
+      + '<td>' + addrCell + '</td>'
       + '<td>' + escHtml(String(r.port)) + '</td>'
       + '<td class="mono">' + escHtml(r.remote_ip) + '</td>'
-      + '<td><span class="badge badge-accent">自动维护</span></td>'
       + '<td>' + (synced
         ? '<span class="badge badge-run"><span class="dot"></span>生效中</span>'
         : devOff
@@ -1818,6 +1857,16 @@ function renderFirewall() {
           : '<span class="badge badge-plain">待同步</span>') + '</td>'
       + '<td><div class="acts"><button class="btn btn-sm" data-a="edit">' + svgI('edit') + '编辑</button>'
       + '<button class="btn btn-sm btn-danger" data-a="del">' + svgI('trash') + '</button></div></td>';
+    tr.querySelectorAll('button[data-ip]').forEach(b => b.addEventListener('click', () => {
+      const ip = b.dataset.ip;
+      const old = b.innerHTML;
+      if (copyText(ip)) {
+        b.classList.add('copied');
+        b.innerHTML = svgI('check') + '<span>已复制</span>';
+        toast('已复制到剪贴板', ip, 'check');
+        setTimeout(() => { b.classList.remove('copied'); b.innerHTML = old; }, 1400);
+      } else toast('复制失败', '请手动选中复制', 'alert');
+    }));
     tr.querySelector('[data-a="edit"]').addEventListener('click', () => ruleDialog(r));
     tr.querySelector('[data-a="del"]').addEventListener('click', () => removeRule(r));
     tb.appendChild(tr);
@@ -1830,16 +1879,23 @@ function renderFirewall() {
   const ent = $('#entRows');
   ent.innerHTML = '';
   (wl.entries || []).forEach(e => {
+    const nm = e.Name || e.name || '—';
+    const owned = ownerOf(nm);
     const tr = document.createElement('tr');
-    tr.innerHTML = '<td class="mono" style="font-size:12px">' + escHtml(e.Name || e.name || '—') + '</td>'
+    tr.innerHTML = '<td class="mono" style="font-size:12px">' + escHtml(nm)
+      + (owned ? '<span class="badge badge-accent" style="margin-left:6px">自动维护</span>'
+        : '<span class="badge badge-plain" style="margin-left:6px">手工</span>') + '</td>'
       + '<td class="mono" style="font-size:11.5px">' + escHtml(e.LocalIp || e.local_ip || '—') + '</td>'
-      + '<td>' + escHtml(String(e.Port == null ? '全部' : e.Port)) + '</td>'
+      + '<td>' + escHtml(String(e.Port == null || e.Port === '-1' ? '全部' : e.Port)) + '</td>'
       + '<td class="mono" style="font-size:11.5px">' + escHtml(e.RemoteIp || e.remote_ip || '::/0') + '</td>'
-      + '<td><button class="btn btn-sm btn-danger" data-a="del">' + svgI('trash') + '</button></td>';
+      + '<td><div class="acts">'
+      + '<button class="btn btn-sm" data-a="edit">' + svgI('edit') + '编辑</button>'
+      + '<button class="btn btn-sm btn-danger" data-a="del">' + svgI('trash') + '</button></div></td>';
+    tr.querySelector('[data-a="edit"]').addEventListener('click', () => entryDialog(e, owned));
     tr.querySelector('[data-a="del"]').addEventListener('click', async () => {
       if (!confirm('从路由器白名单里删除这条条目？')) return;
       const r = await api('/api/router/whitelist/delete',
-        { id: e.ID || e.id || '', name: e.Name || e.name || '' }).catch(() => null);
+        { id: e.ID || e.id || '', name: nm }).catch(() => null);
       if (!r || !r.ok) return errToast(r);
       toast('条目已删除', '', 'check');
       loadFirewall();
@@ -1984,6 +2040,53 @@ function ruleDialog(src) {
     devSel.innerHTML = '<option>（先让路由器认识设备）</option>';
   }
   mask.addEventListener('click', e => { if (e.target === mask) close(); });
+  document.addEventListener('keydown', onKey);
+  mask.appendChild(box);
+  document.body.appendChild(mask);
+}
+/* 路由器手工条目的编辑弹窗（改版时丢掉的功能；走 /api/router/whitelist/update）。
+   owned 非空说明这条归某条规则自动维护，改它会被下一轮同步覆盖 —— 弹窗里说清楚。 */
+function entryDialog(e, owned) {
+  const mask = el('div', 'tpick-mask');
+  const box = el('div', 'epick');
+  const port = String(e.Port == null ? '-1' : e.Port);
+  box.innerHTML = '<div class="th">' + svgI('link')
+    + '<span>编辑白名单条目</span>'
+    + '<button class="btn btn-sm" type="button" data-a="x">关闭</button></div>'
+    + '<div class="ebody">'
+    + (owned ? '<div class="hp" style="margin-bottom:10px">这条由规则自动维护，'
+      + '手工改完可能马上被下一次同步改回去；要长期生效请改成不重名的条目，或去编辑那条规则。</div>' : '')
+    + '<div class="efld"><label>服务名称<em>*</em></label>'
+    + '<input class="inp" id="eName" value="' + escAttr(e.Name || e.name || '') + '"></div>'
+    + '<div class="efld"><label>本机 / 地址<em>*</em></label>'
+    + '<input class="inp mono" id="eLocal" value="' + escAttr(e.LocalIp || e.local_ip || '') + '">'
+    + '<div class="hp">对外的 IPv6 地址</div></div>'
+    + '<div class="egrid2">'
+    + '<div class="efld"><label>放行端口</label>'
+    + '<input class="inp" id="ePort" value="' + escAttr(port) + '" placeholder="-1 表示全部端口"></div>'
+    + '<div class="efld"><label>允许来源</label>'
+    + '<input class="inp" id="eRemote" value="' + escAttr(e.RemoteIp || e.remote_ip || '::/0') + '"></div>'
+    + '</div></div><div class="efoot">'
+    + '<button class="btn" type="button" data-a="x">取消</button>'
+    + '<button class="btn btn-primary" type="button" data-a="save">保存修改</button></div>';
+  function close() { mask.remove(); document.removeEventListener('keydown', onKey); }
+  function onKey(ev) { if (ev.key === 'Escape') close(); }
+  box.querySelectorAll('[data-a="x"]').forEach(b => b.addEventListener('click', close));
+  box.querySelector('[data-a="save"]').addEventListener('click', async () => {
+    const payload = {
+      id: e.ID || e.id || '',
+      name: box.querySelector('#eName').value.trim(),
+      local_ip: box.querySelector('#eLocal').value.trim(),
+      port: box.querySelector('#ePort').value.trim() || '-1',
+      remote_ip: box.querySelector('#eRemote').value.trim() || '::/0',
+    };
+    const r = await api('/api/router/whitelist/update', payload).catch(() => null);
+    if (!r || !r.ok) return errToast(r);   // 校验文案由后端给，界面不显示内部参数
+    close();
+    toast('条目已更新', '', 'check');
+    loadFirewall();
+  });
+  mask.addEventListener('click', ev => { if (ev.target === mask) close(); });
   document.addEventListener('keydown', onKey);
   mask.appendChild(box);
   document.body.appendChild(mask);
