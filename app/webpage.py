@@ -1444,8 +1444,8 @@ function renderInfo() {
   const info = (S.info && S.info.info) || {};
   const ok = !!(S.info && S.info.ok);
   box.textContent = info.product || (ok ? '路由器' : '读不到路由器信息');
-  sub.textContent = [info.model, S.state && S.state.overview && S.state.overview.router_host,
-    info.hardware && ('硬件 ' + info.hardware)].filter(Boolean).join(' · ');
+  // 副标题只放管理地址；内部主板代号与硬件版本一律不进界面（含悬浮提示）
+  sub.textContent = (S.state && S.state.overview && S.state.overview.router_host) || '';
   badge.className = 'badge ' + (ok ? 'badge-run' : 'badge-err');
   badge.innerHTML = '<span class="dot"></span>' + (ok ? '在线' : '未连接');
 
