@@ -176,6 +176,11 @@ tr:last-child td{border-bottom:none}
 .subtab.active .cnt{color:var(--accent);border-color:var(--accent)}
 tr.offrow td{opacity:.62}
 .devnote{color:var(--muted);font-size:12px;margin:10px 0 0}
+/* 设备列表每行的「唤醒」小按钮 */
+.wbtn{padding:3px 11px;font-size:12px;line-height:1.5;border-radius:6px;
+  border:1px solid var(--btn-line);background:transparent;color:var(--accent)}
+.wbtn:hover{border-color:var(--accent);background:var(--accent-weak)}
+.wbtn:disabled{opacity:.5;cursor:default}
 /* 白名单徽标 + 设备选址弹窗 */
 .badge{display:inline-block;font-size:11px;padding:0 7px;border-radius:9px;margin-left:5px;
   background:var(--ok-bg);color:var(--ok);vertical-align:1px}
@@ -268,7 +273,8 @@ tr.offrow td{opacity:.62}
         d="M13.5 8a5.5 5.5 0 1 1-1.6-3.9M13.5 1.8v2.7h-2.7"/></svg> 刷新</button></h2>
       <p class="desc" id="hostsDesc">进入页面已自动加载；点右上「刷新」重新获取。
         在线/离线/儿童上网来自路由器设备档案（HostInfo），黑名单来自 WiFi MAC 过滤配置
-        （wlanfilterenhance）。在白名单卡里点「添加」选设备即可放行任意一台。</p>
+        （wlanfilterenhance）。在白名单卡里点「添加」选设备即可放行任意一台；
+        点每行「唤醒」可给已关机的设备发网络唤醒包（需要该设备本身支持 WOL）。</p>
       <div class="subtabs" role="tablist">
         <button class="subtab active" id="devtab-online" type="button">在线设备<span class="cnt" id="cnt-online">0</span></button>
         <button class="subtab" id="devtab-offline" type="button">离线设备<span class="cnt" id="cnt-offline">0</span></button>
@@ -342,6 +348,7 @@ tr.offrow td{opacity:.62}
         <li><b>按设备维护</b> —— 白名单里点「添加」选设备即放行，之后地址一变自动原地更新条目</li>
         <li><b>自动取址</b> —— 绑定设备的规则取路由器设备记录的最新地址；设备离线或记录未就绪时自动跳过，不误删</li>
         <li><b>设备列表</b> —— 在线 / 离线 / 黑名单 / 儿童上网一页看全，添加放行时直接按设备选</li>
+        <li><b>网络唤醒</b> —— 设备列表里一键给已关机的设备发 WOL 魔术包，不用跑到机器跟前开机</li>
         <li><b>多端口放行</b> —— 一次放行多个端口（逗号分隔），不用逐个去路由器设置</li>
         <li><b>网页控制台</b> —— 所有配置网页可改、持久化保存，改完即时生效</li>
         <li><b>同步记录</b> —— 白名单每次真实改动都有流水可查，落盘保存重启不丢</li>
@@ -1139,6 +1146,39 @@ tr.offrow td{opacity:.62}
     });
   });
 
+  // 设备列表的「唤醒」：发出 WOL 魔术包
+  // 只提示「已发出」—— 设备开机要多久、路由器设备表什么时候刷新都不由我们控制，
+  // 所以这里绝不判断「成功/失败」，免得设备正常启动时反而吓用户一跳。
+  function wake(h, btn) {
+    if (btn.disabled) { return; }
+    btn.disabled = true;
+    api("/api/wol", { method: "POST", body: JSON.stringify({ mac: h.mac }) })
+      .then(function (j) {
+        toast(j.ok ? ("已向 " + h.mac + " 发出唤醒包")
+                   : ("唤醒失败：" + (j.error || "")),
+              j.ok ? "ok" : "err");
+        if (j.ok) { btn.textContent = "已发送"; }
+      })
+      .catch(function (e) { toast("请求失败：" + e, "err"); })
+      .then(function () {
+        // 与后端 10 秒节流对齐，冷却期内不让连点（换页签重新渲染后按钮会重新可用，
+        // 那时由后端限频兜底）
+        setTimeout(function () {
+          btn.disabled = false; btn.textContent = "唤醒";
+        }, 10000);
+      });
+  }
+
+  function wakeBtn(h) {
+    var b = document.createElement("button");
+    b.type = "button";
+    b.className = "wbtn";
+    b.textContent = "唤醒";
+    b.title = "向 " + h.mac + " 发送网络唤醒包（该设备需开启 WOL）";
+    b.addEventListener("click", function () { wake(h, b); });
+    return b;
+  }
+
   function loadHosts() {
     var btn = document.getElementById("btnHosts");
     btn.disabled = true;
@@ -1176,7 +1216,11 @@ tr.offrow td{opacity:.62}
         if (rowCls) { tr.className = rowCls; }
         cells.forEach(function (v, i) {
           var td = document.createElement("td");
-          td.textContent = (v === null || v === undefined || v === "") ? "—" : v;
+          if (v && v.nodeType === 1) {
+            td.appendChild(v);          // 单元格直接放元素（唤醒按钮）
+          } else {
+            td.textContent = (v === null || v === undefined || v === "") ? "—" : v;
+          }
           if (monoCols.indexOf(i) >= 0) { td.className = "mono"; }
           tr.appendChild(td);
         });
@@ -1206,19 +1250,20 @@ tr.offrow td{opacity:.62}
         }
       }
 
-      var t1 = mkTable(["MAC（填 TARGET_MAC）", "主机名", "IPv4", "当前 IPv6"]);
+      var t1 = mkTable(["MAC", "主机名", "IPv4", "当前 IPv6", "操作"]);
       online.forEach(function (h) {
         addRow(t1, [h.mac, h.name, h.ipv4,
-          (h.ipv6 || []).join(", ") || "（无全局 IPv6）"], [0]);
+          (h.ipv6 || []).join(", ") || "（无全局 IPv6）", wakeBtn(h)], [0]);
       });
       mount("devbox-online", t1, "当前没有在线设备。");
 
-      var t2 = mkTable(["MAC", "主机名", "IPv4", "最后在线"]);
+      var t2 = mkTable(["MAC", "主机名", "IPv4", "最后在线", "操作"]);
       offline.forEach(function (h) {
-        addRow(t2, [h.mac, h.name, h.ipv4, h.offline_at || "（未知）"], [0], "offrow");
+        addRow(t2, [h.mac, h.name, h.ipv4, h.offline_at || "（未知）", wakeBtn(h)],
+               [0], "offrow");
       });
       mount("devbox-offline", t2, "当前没有离线记录。",
-        "离线设备保留痕迹，按最后在线时间排列，方便回头找 MAC。");
+        "离线设备保留痕迹，按最后在线时间排列，方便回头找 MAC；点「唤醒」可直接给关机的设备发开机信号。");
 
       var t3 = mkTable(["主机名", "MAC", "拦截频段"]);
       black.forEach(function (b) {
@@ -1228,11 +1273,12 @@ tr.offrow td{opacity:.62}
       mount("devbox-black", t3, "黑名单是空的（没有设备被 WiFi 拦截）。",
         "来自路由器 WiFi MAC 过滤黑名单，只读展示；增删请到路由器管理页操作。");
 
-      var t4 = mkTable(["主机名", "MAC", "当前 IPv6", "状态"]);
+      var t4 = mkTable(["主机名", "MAC", "当前 IPv6", "状态", "操作"]);
       kids.forEach(function (h) {
         addRow(t4, [h.name, h.mac,
           (h.ipv6 || []).join(", ") || "",
-          h.active ? "在线" : ("离线" + (h.offline_at ? " · " + h.offline_at : ""))], [1]);
+          h.active ? "在线" : ("离线" + (h.offline_at ? " · " + h.offline_at : "")),
+          wakeBtn(h)], [1]);
       });
       mount("devbox-kids", t4, "没有加入「儿童上网保护」的设备。",
         "由路由器儿童上网管控标记圈定；这些设备在线时也会出现在「在线设备」页签里。");

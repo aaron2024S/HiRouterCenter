@@ -10,12 +10,16 @@ import json
 import os
 import sys
 import tempfile
+import threading
 import unittest
+from unittest import mock
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from app import discover, trustlist  # noqa: E402
+from app import discover, trustlist, wol  # noqa: E402
 from app.config import Config, Rule  # noqa: E402
+from app.node import Node  # noqa: E402
+from app.settings import SettingsError  # noqa: E402
 from app.sync import Syncer  # noqa: E402
 
 NAS_MAC = "00:11:22:AA:BB:CC"
@@ -1030,6 +1034,146 @@ class TestEvents(unittest.TestCase):
         discover.temporary_set = lambda: set(temp or ())
         if macs is not None:
             discover.local_macs = lambda: set(macs)
+
+
+class TestWakeOnLan(unittest.TestCase):
+    """网络唤醒：魔术包字节、广播地址推导、限频、以及 Node 侧的准入判断。"""
+
+    def test_magic_packet_bytes(self):
+        pkt = wol.magic_packet("3C:7C:3F:11:22:33")
+        self.assertEqual(len(pkt), 102)
+        self.assertEqual(pkt[:6], b"\xff" * 6)
+        mac = bytes.fromhex("3c7c3f112233")
+        for i in range(16):
+            off = 6 + i * 6
+            self.assertEqual(pkt[off:off + 6], mac, f"第 {i + 1} 遍 MAC 不对")
+
+    def test_mac_writing_styles_all_accepted(self):
+        want = wol.magic_packet("3C:7C:3F:11:22:33")
+        for style in ("3c:7c:3f:11:22:33", "3C-7C-3F-11-22-33",
+                      "3c7c3f112233", " 3C:7C:3F:11:22:33 ", "3C7C.3F11.2233"):
+            self.assertEqual(wol.magic_packet(style), want, style)
+
+    def test_bad_mac_rejected(self):
+        for bad in ("", "3C:7C:3F", "zz:zz:zz:zz:zz:zz", "3C:7C:3F:11:22"):
+            with self.assertRaises(ValueError, msg=bad):
+                wol.magic_packet(bad)
+
+    def test_broadcast_from_route_table(self):
+        """/24 直连路由 → 该网段的定向广播，且始终附带全局广播。"""
+        routes = [(0xC0A80300, 0xFFFFFF00)]      # 192.168.3.0/24
+        with mock.patch.object(wol, "_routes", return_value=routes):
+            got = wol.broadcast_targets("192.168.3.117")
+        self.assertEqual(got, ["192.168.3.255", "255.255.255.255"])
+
+    def test_broadcast_respects_non_24_prefix(self):
+        """/16 网段不能按 /24 猜，要按路由表算。"""
+        routes = [(0xC0A80000, 0xFFFF0000)]      # 192.168.0.0/16
+        with mock.patch.object(wol, "_routes", return_value=routes):
+            got = wol.broadcast_targets("192.168.3.117")
+        self.assertIn("192.168.255.255", got)
+        self.assertNotIn("192.168.3.255", got)
+
+    def test_broadcast_falls_back_to_24(self):
+        """路由表读不到（非 Linux / 容器没挂 proc）时退回按 /24 猜。"""
+        with mock.patch.object(wol, "_routes", return_value=[]):
+            got = wol.broadcast_targets("10.4.7.9")
+        self.assertEqual(got, ["10.4.7.255", "255.255.255.255"])
+
+    def test_broadcast_without_ipv4(self):
+        """设备没有 IPv4（纯 IPv6 / 空字段）时只能发全局广播。"""
+        for empty in ("", None, "fe80::1"):
+            got = wol.broadcast_targets(empty)
+            self.assertEqual(got, ["255.255.255.255"], empty)
+
+    def test_send_counts_packets(self):
+        sent = []
+
+        class FakeSock:
+            def __init__(self, *a, **k):
+                pass
+
+            def setsockopt(self, *a):
+                pass
+
+            def sendto(self, pkt, addr):
+                sent.append((len(pkt), addr))
+
+            def close(self):
+                pass
+
+        with mock.patch.object(wol.socket, "socket", FakeSock), \
+                mock.patch.object(wol, "ROUND_GAP", 0), \
+                mock.patch.object(wol, "_routes", return_value=[]):
+            res = wol.send("3C:7C:3F:11:22:33", "192.168.3.117")
+        self.assertTrue(res["ok"])
+        # 2 个目标 × 2 个端口 × 3 轮
+        self.assertEqual(res["sent"], 12)
+        self.assertEqual(len(sent), 12)
+        self.assertTrue(all(n == 102 for n, _ in sent))
+        self.assertEqual({a[1] for _, a in sent}, {9, 7})
+
+    def test_throttle(self):
+        gate = wol.Throttle(cooldown=10.0)
+        self.assertEqual(gate.acquire("aa", now=1000.0), 0.0)
+        self.assertGreater(gate.acquire("aa", now=1005.0), 0.0)   # 冷却中
+        self.assertEqual(gate.acquire("aa", now=1010.5), 0.0)    # 冷却过了
+        self.assertEqual(gate.acquire("bb", now=1011.0), 0.0)    # 别的设备不受影响
+
+    def test_throttle_global_quota(self):
+        gate = wol.Throttle(cooldown=1.0, window=30.0, quota=3)
+        for i in range(3):
+            self.assertEqual(gate.acquire(f"m{i}", now=100.0 + i), 0.0)
+        self.assertGreater(gate.acquire("m9", now=104.0), 0.0)    # 超额
+        self.assertEqual(gate.acquire("m9", now=131.0), 0.0)     # 窗口滑过去了
+
+
+class TestWakeAdmission(unittest.TestCase):
+    """Node.wake_device 的准入：只唤醒设备档案里出现过的 MAC。"""
+
+    def make_node(self, router):
+        cfg = Config(rules=[])
+        node = object.__new__(Node)      # 绕开 __init__：不建真路由器、不读会话
+        node.cfg = cfg
+        node.router = router
+        node.syncer = Syncer(cfg, router)
+        node._lock = threading.RLock()
+        node._wol_gate = wol.Throttle(cooldown=10.0)
+        return node
+
+    def test_unknown_mac_rejected(self):
+        node = self.make_node(FakeRouter())
+        with mock.patch.object(wol, "send") as send:
+            res = node.wake_device({"mac": "AA:BB:CC:DD:EE:99"})
+        self.assertFalse(res["ok"])
+        self.assertIn("不在路由器设备档案", res["error"])
+        send.assert_not_called()
+
+    def test_known_mac_sends(self):
+        node = self.make_node(FakeRouter())
+        with mock.patch.object(wol, "send",
+                               return_value={"ok": True, "sent": 12,
+                                             "targets": ["255.255.255.255"]}) as send:
+            res = node.wake_device({"mac": NAS_MAC})
+        self.assertTrue(res["ok"])
+        send.assert_called_once()
+        self.assertEqual(send.call_args[0][0], NAS_MAC)      # 用档案里的原始写法
+        self.assertEqual(send.call_args[0][1], "192.168.3.5")  # 带上 IPv4 算广播
+
+    def test_second_click_throttled(self):
+        node = self.make_node(FakeRouter())
+        with mock.patch.object(wol, "send",
+                               return_value={"ok": True, "sent": 12, "targets": []}):
+            self.assertTrue(node.wake_device({"mac": NAS_MAC})["ok"])
+            again = node.wake_device({"mac": NAS_MAC})
+        self.assertFalse(again["ok"])
+        self.assertTrue(again["throttled"])
+
+    def test_bad_mac_rejected_before_router(self):
+        """MAC 明显不合法时不该去碰路由器（这是网页侧的低级误输入）。"""
+        node = self.make_node(FakeRouter())
+        with self.assertRaises(SettingsError):
+            node.wake_device({"mac": "nope"})
 
 
 if __name__ == "__main__":

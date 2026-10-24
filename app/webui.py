@@ -231,6 +231,10 @@ class WebUI:
                 return handler.send_json(self.node.whitelist())
             if method == "GET" and route == "/api/router/hosts":
                 return handler.send_json(self.node.hosts())
+            if method == "POST" and route == "/api/wol":
+                res = self.node.wake_device(_json_body(body))
+                # 限频回 429：前端据此知道是「刚发过」而不是真失败
+                return handler.send_json(res, 429 if res.get("throttled") else 200)
             if method == "POST" and route == "/api/router/firewall":
                 data = _json_body(body)
                 want = data.get("enable")

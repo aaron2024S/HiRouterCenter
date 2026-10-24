@@ -18,7 +18,7 @@ import logging
 import os
 import threading
 
-from . import discover, events, notify, settings as st, trustlist
+from . import discover, events, notify, settings as st, trustlist, wol
 from .config import load_config
 from .router import HuaweiRouter, RouterError
 from .sync import Syncer
@@ -131,6 +131,8 @@ class Node:
         # 只保护"替换 self.cfg / self.router"这几行本身；
         # 真正跑一轮同步的互斥由 syncer.lock 负责。
         self._lock = threading.RLock()
+        # 网络唤醒的限频闸（同一台设备 10 秒内只发一次）
+        self._wol_gate = wol.Throttle(cooldown=10.0)
 
     # ---------------- 只读视图 ----------------
 
@@ -400,6 +402,56 @@ class Node:
             return {"ok": True, "hosts": rows,
                     "blacklist": blacklist, "blacklist_error": bl_error,
                     "lan_prefixes": discover.lan_prefixes(self.router)}
+
+    # ---------------- 网络唤醒（设备列表的「唤醒」按钮） ----------------
+
+    def wake_device(self, data: dict) -> dict:
+        """给设备列表里的某台设备发 WOL 魔术包。
+
+        两条约束：
+
+        1. **只认路由器设备档案里出现过的 MAC**。否则这个接口就成了「随便填个
+           MAC 就往局域网打广播」的口子。在线/离线设备都能唤醒，覆盖正常用途。
+        2. **不判定唤醒成功与否**。发了就是发了 —— 设备开机要多久、路由器设备
+           表什么时候刷新，都不是我们能控制的（详见 wol.py 顶部说明）。这里
+           只把「发出去了」这件事回报给网页。
+
+        注意不要在持 syncer.lock 的时候发广播：一轮同步正卡在路由器请求上时，
+        发个包没必要跟着排队。
+        """
+        mac = discover.norm_mac(str(data.get("mac") or ""))
+        if len(mac) != 12:
+            raise st.SettingsError("MAC 格式不对，应为 6 段十六进制（如 3C:7C:3F:11:22:33）")
+
+        with self.syncer.lock:
+            err = self._logged_in()
+            if err:
+                return {"ok": False, "error": err}
+            try:
+                rows = self._host_rows()
+            except RouterError as e:
+                return {"ok": False, "error": str(e)}
+
+        hit = next((r for r in rows
+                    if discover.norm_mac(r.get("mac") or "") == mac), None)
+        if hit is None:
+            return {"ok": False,
+                    "error": "这个 MAC 不在路由器设备档案里 —— 只能在设备列表里唤醒本机已知的设备"}
+
+        wait = self._wol_gate.acquire(mac)
+        if wait > 0:
+            return {"ok": False, "throttled": True,
+                    "error": f"刚给这台设备发过，{int(wait) + 1} 秒后再试"}
+
+        res = wol.send(hit.get("mac") or mac, hit.get("ipv4") or "")
+        label = hit.get("name") or "未知设备"
+        if res.get("ok"):
+            log.info("已向 %s（%s）发送唤醒包：%d 个广播 → %s", label, hit["mac"],
+                     res["sent"], ", ".join(res["targets"]))
+        else:
+            log.warning("向 %s（%s）发送唤醒包失败：%s", label, hit["mac"],
+                        res.get("error"))
+        return res
 
     # ---------------- 白名单规则管理（网页白名单页的弹窗） ----------------
 

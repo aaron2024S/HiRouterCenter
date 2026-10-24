@@ -316,6 +316,7 @@ class FakeRouter:
 class FakeNode:
     def __init__(self):
         self.saved = []
+        self.woken = []
         self.router = FakeRouter()
         from app.sync import Syncer
         from app.config import Config
@@ -372,6 +373,11 @@ class FakeNode:
                                        "kids": False}],
                 "blacklist": [], "blacklist_error": "",
                 "lan_prefixes": ["240e:3a4:48ff:6d10::/64"]}
+
+    def wake_device(self, data):
+        self.woken.append(data)
+        return {"ok": True, "mac": data.get("mac"), "sent": 12,
+                "targets": ["192.168.3.255", "255.255.255.255"]}
 
     def set_firewall(self, on):
         return {"ok": True, "enabled": on}
@@ -671,7 +677,8 @@ class WebUITest(unittest.TestCase):
 
     def test_actions_require_login(self):
         for path, method in (("/api/settings", "POST"), ("/api/sync", "POST"),
-                             ("/api/router/whitelist", "GET")):
+                             ("/api/router/whitelist", "GET"),
+                             ("/api/wol", "POST")):
             code, j, _ = call(self.base, path, method, body={} if method == "POST" else None)
             self.assertEqual(code, 401, path)
             self.assertFalse(j["ok"])
@@ -732,6 +739,23 @@ class WebUITest(unittest.TestCase):
 
         code, j, _ = call(self.base, "/api/sync", "POST", {}, cookie=cookie)
         self.assertEqual((code, j["ok"]), (200, True))
+
+    def test_wake_device(self):
+        cookie = self.login()
+        code, j, _ = call(self.base, "/api/wol", "POST",
+                          {"mac": "00:11:22:AA:BB:CC"}, cookie=cookie)
+        self.assertEqual((code, j["ok"]), (200, True))
+        self.assertEqual(self.node.woken[-1]["mac"], "00:11:22:AA:BB:CC")
+
+    def test_wake_throttled_maps_to_429(self):
+        """限频必须回 429 —— 前端据此区分「刚发过」和「真失败」。"""
+        cookie = self.login()
+        self.node.wake_device = lambda data: {"ok": False, "throttled": True,
+                                             "error": "刚给这台设备发过，8 秒后再试"}
+        code, j, _ = call(self.base, "/api/wol", "POST",
+                          {"mac": "00:11:22:AA:BB:CC"}, cookie=cookie)
+        self.assertEqual(code, 429)
+        self.assertFalse(j["ok"])
 
     def test_save_settings_round_trip(self):
         cookie = self.login()
