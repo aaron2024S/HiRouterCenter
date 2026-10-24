@@ -498,22 +498,25 @@ html[data-theme="light"] .tpick-mask{background:rgba(30,34,56,.34)}
 .gatebox .efld{display:flex;flex-direction:column}
 .gatebox .efld > span{margin-bottom:5px;font-size:11.5px;color:var(--text-4)}
 
-/* 星期多选 / 唤醒设备多选 */
+/* 星期多选 / 唤醒设备多选（复选框列表，用户指定样式） */
 .wdays{display:flex;gap:6px}
 .wday{width:34px;height:32px;border:1px solid var(--line-3);border-radius:8px;
   background:var(--btn-bg);font-size:12px;color:var(--text-3);cursor:pointer}
 .wday[data-on="true"]{border-color:var(--accent-line);background:var(--accent-soft);
   color:var(--accent-text);font-weight:600}
-.devpick{display:flex;flex-wrap:wrap;gap:6px;max-height:190px;overflow:auto;
-  border:1px solid var(--line-2);border-radius:10px;padding:8px;background:var(--ink-800)}
-.devchip{display:flex;flex-direction:column;align-items:flex-start;gap:1px;
+.devpick{display:flex;flex-direction:column;gap:4px;max-height:230px;overflow:auto;
+  border:1px solid var(--line-2);border-radius:10px;padding:7px;background:var(--ink-800)}
+.devrow{display:flex;align-items:center;gap:8px;padding:7px 9px;
   border:1px solid var(--line-3);border-radius:8px;background:var(--btn-bg);
-  padding:5px 9px;font-size:12px;color:var(--text-2);text-align:left;cursor:pointer}
-.devchip .mc{font-family:var(--mono);font-size:10px;color:var(--text-5)}
-.devchip[data-off="true"]{opacity:.62}
-.devchip[data-on="true"]{border-color:var(--accent-line);background:var(--accent-soft);
+  font-size:12px;color:var(--text-2);cursor:pointer}
+.devrow:hover{border-color:var(--line-hover)}
+.devrow[data-on="true"]{border-color:var(--accent-line);background:var(--accent-soft);
   color:var(--accent-text)}
-.devchip[data-on="true"] .mc{color:var(--accent-text);opacity:.8}
+.devrow[data-off="true"]{opacity:.62}
+.devrow input[type="checkbox"]{width:15px;height:15px;flex:none;accent-color:var(--accent);cursor:pointer}
+.devrow .nm{font-weight:500;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.devrow .mc{margin-left:auto;font-family:var(--mono);font-size:10px;color:var(--text-5);flex:none}
+.devrow[data-on="true"] .mc{color:var(--accent-text);opacity:.8}
 .efld > span{margin-bottom:5px;font-size:11.5px;color:var(--text-4)}
 
 /* 收起侧栏（桌面端） */
@@ -2403,7 +2406,14 @@ function taskDialog(src) {
   daysSel.addEventListener('change', () => {
     if (daysSel.value === 'all') { chosen.clear(); [1, 2, 3, 4, 5, 6, 7].forEach(x => chosen.add(x)); }
     else if (daysSel.value === 'wd') { chosen.clear(); [1, 2, 3, 4, 5].forEach(x => chosen.add(x)); }
-    syncDaysUi();
+    if (daysSel.value === 'custom') {
+      // 直接进自定义模式。不能从 chosen 反推：新任务默认 7 天全选，
+      // 反推会算出「每天」把下拉弹回去，星期选择框永远出不来。
+      daysBox.classList.remove('hide');
+      pick.querySelectorAll('.wday').forEach(b => {
+        b.dataset.on = chosen.has(Number(b.dataset.d)) ? 'true' : 'false';
+      });
+    } else syncDaysUi();
   });
   function syncKindUi() {
     powBox.classList.toggle('hide', kindSel.value !== 'wifi_power');
@@ -2422,20 +2432,25 @@ function taskDialog(src) {
     }
     const preset = ((cur.params || {}).devices || []).map(d => macKey(d.mac));
     pickedDevs = new Set(preset);
+    // 每行一个复选框的列表样式（用户指定），不是小卡片点选
     box2.innerHTML = hosts.map(h => {
       const on = pickedDevs.has(macKey(h.mac));
-      return '<button class="devchip" type="button" data-mac="' + escAttr(h.mac) + '"'
-        + (on ? ' data-on="true"' : '') + (h.active ? '' : ' data-off="true"') + '>'
+      return '<label class="devrow"' + (h.active ? '' : ' data-off="true"')
+        + (on ? ' data-on="true"' : '') + '>'
+        + '<input type="checkbox" data-mac="' + escAttr(h.mac) + '"' + (on ? ' checked' : '') + '>'
         + '<span class="nm">' + escHtml(h.name || h.mac) + '</span>'
-        + '<span class="mc">' + escHtml(h.mac) + '</span></button>';
+        + '<span class="mc">' + escHtml(h.mac) + '</span></label>';
     }).join('');
-    box2.querySelectorAll('.devchip').forEach(b => b.addEventListener('click', () => {
-      const m = String(b.dataset.mac).toUpperCase();
-      if (pickedDevs.has(m)) { pickedDevs.delete(m); b.removeAttribute('data-on'); }
-      else {
-        if (pickedDevs.size >= 20) return toast('最多选 20 台', '', 'alert');
-        pickedDevs.add(m); b.dataset.on = 'true';
-      }
+    box2.querySelectorAll('input[type="checkbox"]').forEach(cb => cb.addEventListener('change', () => {
+      const m = String(cb.dataset.mac).toUpperCase();
+      if (cb.checked) {
+        if (pickedDevs.size >= 20) {
+          cb.checked = false;
+          return toast('最多选 20 台', '', 'alert');
+        }
+        pickedDevs.add(m);
+      } else pickedDevs.delete(m);
+      cb.closest('.devrow').dataset.on = cb.checked ? 'true' : 'false';
     }));
   }
   kindSel.addEventListener('change', syncKindUi);
