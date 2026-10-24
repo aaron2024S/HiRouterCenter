@@ -935,6 +935,7 @@ html[data-theme="light"] .tpick-mask{background:rgba(30,34,56,.34)}
   <div class="body">
     <aside class="sidebar">
       <nav class="nav">
+        <div class="navg">路由器</div>
         <button class="ni" data-page="devices" aria-current="true">
           <svg class="i"><use href="#i-devices"/></svg><span>设备</span><span class="cnt" id="cntDev"></span></button>
         <button class="ni" data-page="firewall">
@@ -1934,7 +1935,12 @@ function renderFirewall() {
   badge.className = 'badge ' + (wl.enabled ? 'badge-run' : 'badge-plain');
   badge.innerHTML = '<span class="dot"></span>' + (wl.enabled ? '已开启' : '已关闭');
   sw.dataset.on = wl.enabled ? 'true' : 'false';
-
+  renderFwKv();
+}
+/* KV 概览单独拆出来：5 秒状态轮询只重画这块（时间会走），不重拉路由器白名单 */
+function renderFwKv() {
+  const wl = S.wl;
+  if (!wl || !wl.ok) return;
   const st = (S.state && S.state.status) || {};
   const c = st.counters || {};
   const kv = [
@@ -3106,6 +3112,7 @@ async function refreshState() {
   S.state = st;
   renderCounts();
   if (S.page === 'devices') renderInfo();
+  if (S.page === 'firewall') renderFwKv();
   if (S.page === 'router') renderSettings();
   if (S.page === 'about') renderAbout();
 }
