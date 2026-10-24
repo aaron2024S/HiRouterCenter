@@ -250,8 +250,11 @@ tr.offrow td{opacity:.62}
     white-space:normal;word-break:break-all;min-width:0;max-width:none}
   table.rmob td::before{content:attr(data-label);flex:none;width:74px;
     color:var(--muted);font-size:12px}
+  /* 第一列（MAC / 任务名）当卡片标题：值加粗，但字段名照常显示 ——
+     卡片顶上一串 3C:7C:3F:11:22:33 不给名字没人知道是什么；
+     显示后所有值也对齐到同一竖线，比原来顶格更整齐。字段名保持常规字重 */
   table.rmob td:first-child{font-weight:600;padding-top:2px}
-  table.rmob td:first-child::before{content:"";width:0}
+  table.rmob td:first-child::before{font-weight:400}
   table.rmob td.tkact{border-top:1px dashed var(--line);margin-top:6px;padding-top:9px;
     justify-content:flex-start}
   table.rmob td.tkact::before{content:"";width:0}
