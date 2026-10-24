@@ -18,7 +18,8 @@ import logging
 import os
 import threading
 
-from . import discover, events, notify, settings as st, tasks as tk, trustlist, wol
+from . import (devtypes, discover, events, notify, notify_events, notify_presets,
+               router_info, settings as st, tasks as tk, trustlist, wol)
 from .config import load_config
 from .router import HuaweiRouter, RouterError
 from .sync import Syncer
@@ -58,6 +59,18 @@ def _is_kid(h: dict) -> bool:
         return True
     mfid = str(h.get("MacFilterID") or "").strip()
     return mfid not in ("", "0")
+
+
+def _cfg(node) -> object:
+    """拿当前配置。
+
+    单元测试里会用 `Node.__new__` 只装配 syncer + router（没有 `cfg` 属性），
+    所以一律走这个函数，不要直接写 `node.cfg`。
+    """
+    try:
+        return node.cfg
+    except AttributeError:
+        return node.syncer.cfg
 
 
 def _parse_blacklist(res) -> list:
@@ -139,6 +152,9 @@ class Node:
         self.tasks = tk.Tasks(lambda: self.router,
                               tk.tasks_path(self.settings_file),
                               guard=lambda: self.syncer.lock)
+        # 任务执行结果也走通知事件（成功 / 失败 / 已错过）
+        self.tasks.on_event = lambda code, text, subject: \
+            notify_events.dispatch(self.cfg, code, text, subject=subject)
 
     # ---------------- 只读视图 ----------------
 
@@ -355,27 +371,203 @@ class Node:
         return {"ok": True, "max": n}
 
     def test_notify(self) -> dict:
-        """按当前通知配置向所有启用渠道各发一条测试消息（网页「发送测试通知」按钮）。"""
-        cfg = self.cfg
-        results = notify.send_all(cfg,
-                                  (cfg.notify_title or "IPv6 白名单已更新")
-                                  + "（测试）",
-                                  "如果你收到这条消息，说明通知配置是通的。")
+        """向所有启用渠道发一条测试消息（不看总开关 / 事件订阅 / 静默时段）。"""
+        results = notify_events.dispatch(
+            self.cfg, "test",
+            "这是一条来自 HiRouterCenter 的测试消息。收到它说明渠道是通的。",
+            title="测试通知", force=True)
         if not results:
             return {"ok": False,
-                    "error": "没有启用任何通知渠道，先在「通知设置」里打开开关并保存"}
-        items = [{"channel": ch, "ok": ok, "error": err} for ch, ok, err in results]
-        failed = [f"{ch}: {err}" for ch, ok, err in results if not ok]
-        return {"ok": not failed, "results": items,
-                "error": "; ".join(failed)}
+                    "error": "还没有启用的通知渠道，先在「通知」页添加一个"}
+        failed = [f"{r['name']}: {r['error']}" for r in results
+                  if not r.get("ok")]
+        return {"ok": not failed, "results": results, "error": "; ".join(failed)}
+
+    # ---------------- 通知：渠道 / 事件 / 策略 / 历史 ----------------
+
+    def notify_view(self) -> dict:
+        """「通知」页要的全部数据（一次拿齐，省三次往返）。"""
+        with self._lock:
+            cfg = self.cfg
+            chans = notify.channels(cfg)
+        return {
+            "ok": True,
+            "enabled": bool(getattr(cfg, "notify_enabled", True)),
+            "quiet": getattr(cfg, "notify_quiet", "") or "",
+            "dedupe": notify_events.dedupe_window(cfg),
+            "history_max": notify_events.history_max(cfg),
+            "history_choices": list(notify_events.HISTORY_CHOICES),
+            "history_limit": notify_events.HISTORY_MAX_LIMIT,
+            "channels": chans,
+            "events": notify_events.events_table(cfg),
+            "presets": notify_presets.specs(),
+        }
+
+    def _write_overlay(self, patch: dict) -> None:
+        """只改设置文件里的某几个键并热生效。
+
+        调用方需已持锁（RLock 可重入）。和 save_settings 的区别：**不重建路由器
+        连接、不清同步状态** —— 改个通知渠道不该把一轮同步的进度清掉。
+        """
+        merged = dict(self.overlay)
+        merged.update(patch)
+        clean = st.validate_overlay(merged)
+        st.save_overlay(clean, self.settings_file)
+        new_cfg = load_config([])
+        self.overlay = clean
+        self.cfg = new_cfg
+        self.syncer.cfg = new_cfg
+
+    def save_channels(self, items: list) -> dict:
+        """整份渠道列表保存（前端「加 / 改 / 删」都走这一条，避免并发错位）。"""
+        try:
+            with self._lock:
+                kept = notify.save(self.cfg, items)
+                self._write_overlay({st.CHANNELS_KEY: kept})
+        except ValueError as e:
+            raise st.SettingsError(str(e))
+        log.info("通知渠道已保存：%d 个", len(kept))
+        return {"ok": True, "channels": kept}
+
+    def test_channel(self, channel: dict) -> dict:
+        """按界面上**当前填的**配置测一条（不用先保存才能测）。"""
+        try:
+            ch = notify.normalize_channel(channel)
+        except ValueError as e:
+            return {"ok": False, "error": str(e)}
+        miss = notify_presets.missing_fields(ch["type"], ch["config"])
+        if miss:
+            return {"ok": False, "error": "还没填：" + "、".join(miss)}
+        ok, err = notify.send_test(self.cfg, ch)
+        return {"ok": ok, "error": err}
+
+    def save_notify_policy(self, patch: dict) -> dict:
+        """总开关 / 静默时段 / 去重窗口 / 历史条数 / 事件订阅。"""
+        want: dict = {}
+        if "enabled" in patch:
+            want[st.BY_KEY["NOTIFY_ENABLED"].key] = bool(patch["enabled"])
+        if "quiet" in patch:
+            want["NOTIFY_QUIET"] = patch["quiet"]
+        if "dedupe" in patch:
+            want["NOTIFY_DEDUPE"] = patch["dedupe"]
+        if "history_max" in patch:
+            want["NOTIFY_HISTORY_MAX"] = patch["history_max"]
+        if "events" in patch:
+            raw = patch["events"]
+            if isinstance(raw, list):
+                raw = {str(e.get("code")): bool(e.get("on"))
+                       for e in raw if isinstance(e, dict)}
+            want[st.NOTIFY_EVENTS_KEY] = notify_events.normalize_events(raw)
+        if not want:
+            raise st.SettingsError("没有要保存的内容")
+        with self._lock:
+            self._write_overlay(want)
+        log.info("通知策略已更新：%s", ", ".join(sorted(want)))
+        return {"ok": True, **self.notify_view()}
+
+    def notify_history(self) -> dict:
+        cfg = self.cfg
+        rows = notify_events.read_history(cfg)
+        return {"ok": True, "items": rows[-notify_events.history_max(cfg):],
+                "max": notify_events.history_max(cfg),
+                "limit": notify_events.HISTORY_MAX_LIMIT}
+
+    def clear_notify_history(self) -> dict:
+        notify_events.clear_history(self.cfg)
+        return {"ok": True}
+
+    def reset_notify_dedupe(self) -> dict:
+        notify_events.reset_dedupe()
+        return {"ok": True}
+
+    # ---------------- 路由器信息卡 / 快捷操作 ----------------
+
+    def router_info(self) -> dict:
+        """首页信息卡的数据（型号 / 运行时长 / WAN 地址 / Wi-Fi 名称…）。"""
+        with self.syncer.lock:
+            try:
+                info = router_info.collect(self.router)
+            except RouterError as e:
+                log.warning("读取路由器信息失败：%s", e)
+                return {"ok": False, "error": "路由器暂时没有响应"}
+            hosts = []
+            try:
+                hosts = self._host_rows() if self.syncer.ensure_login() else []
+            except RouterError:
+                hosts = []
+            online = sum(1 for h in hosts if h.get("active"))
+            return {"ok": True, "info": info, "hosts_total": len(hosts),
+                    "hosts_online": online,
+                    "firewall_on": self.syncer.firewall_on}
+
+    def set_host_type(self, mac: str, type_id: str) -> dict:
+        """手改某台设备的类型（空 / unknown = 清掉手改，回到自动识别）。"""
+        mac = (mac or "").strip().upper()
+        if not mac:
+            raise st.SettingsError("缺少设备 MAC")
+        tid = (type_id or "").strip()
+        if tid and tid != "unknown" and tid not in devtypes.TYPE_IDS:
+            raise st.SettingsError(f"不认识的设备类型：{tid}")
+        devtypes.set_type(self.cfg.state_file, mac, tid or "unknown")
+        return {"ok": True, "mac": mac, "type": tid or "unknown"}
+
+    # 手动操作后按动作挂静默期：刚重启的路由器别马上去读，否则刷一串假失败
+    _QUIET = {"reboot": 240, "redial": 150, "channel": 60, "wifi_power": 20}
+
+    def router_action(self, kind: str, value=None) -> dict:
+        """首页信息卡上的四个快捷操作：重启 / 重拨 / 功率模式 / 信道优化。"""
+        kind = (kind or "").strip()
+        if kind not in self._QUIET:
+            raise st.SettingsError("不认识的操作")
+        task = {"kind": kind}
+        if kind == "wifi_power":
+            try:
+                mode = int(value)
+            except (TypeError, ValueError):
+                raise st.SettingsError("功率模式要选一个档位") from None
+            if mode not in tk.POWER_MODES:
+                raise st.SettingsError("功率模式档位不对")
+            task["params"] = {"power_mode": mode}
+        with self.syncer.lock:
+            err = self._logged_in()
+            if err:
+                return {"ok": False, "error": err}
+            try:
+                res = tk.apply(self.router, task)
+            except RouterError:
+                log.exception("快捷操作失败：%s", kind)
+                return {"ok": False, "error": "路由器没有响应，操作没完成"}
+            if res.get("ok"):
+                # 两条静默期都要挂：一条管同步循环别马上读路由器，
+                # 一条管计划任务别在这期间又冲上去按一次按钮
+                self.syncer.defer(self._QUIET[kind], reason=kind)
+                self.tasks.defer(self._QUIET[kind])
+            return res
+
+    def _power_mode(self):
+        """当前 Wi-Fi 功率模式（0/1/2）；读不到返回 None，不额外报错。"""
+        try:
+            radio = self.router.get("wlanradio")
+            if isinstance(radio, dict) and radio.get("PowerMode") is not None:
+                return int(radio["PowerMode"])
+        except Exception:                       # noqa: BLE001
+            pass
+        return None
 
     def _host_rows(self) -> list[dict]:
-        """HostInfo → 设备行（设备列表页与白名单弹窗共用）。调用方需已登录。"""
+        """HostInfo → 设备行（设备列表页与白名单弹窗共用）。调用方需已登录。
+
+        每行带一个 `type`（设备类型图标用）：用户手改的 > 固件字段 > 关键词猜。
+        """
         rows = []
+        # 用 _cfg() 兜底：单元测试里会用 Node.__new__ 只装配 syncer + router
+        state_file = _cfg(self).state_file
+        manual = devtypes.load(state_file)
         for h in self.router.get("HostInfo") or []:
             addrs = discover.host_candidates(h)
             offline_at = (h.get("OfflineRecord") or "").split("#")[0].strip()
             active = _truthy(h.get("Active"))
+            mtype, is_manual = devtypes.resolve(h, manual)
             rows.append({
                 "mac": h.get("MACAddress", "") or "",
                 "name": discover.host_display_name(h),
@@ -384,6 +576,8 @@ class Node:
                 "active": active,
                 "offline_at": offline_at if (offline_at and not active) else "",
                 "kids": _is_kid(h),
+                "type": mtype,
+                "type_manual": is_manual,
             })
         rows.sort(key=lambda r: r["mac"])
         return rows
@@ -407,7 +601,14 @@ class Node:
                 blacklist, bl_error = [], str(e)
             return {"ok": True, "hosts": rows,
                     "blacklist": blacklist, "blacklist_error": bl_error,
-                    "lan_prefixes": discover.lan_prefixes(self.router)}
+                    "lan_prefixes": discover.lan_prefixes(self.router),
+                    # 规则列表顺手带上（纯内存，不额外请求路由器）：
+                    # 设备卡上「已放行 xxx」就靠它和设备 MAC 对上
+                    "rules": [{"name": r.name, "mac": r.mac or "",
+                               "port": "全部" if r.port in (None, -1)
+                                       else str(r.port)}
+                              for r in _cfg(self).rules],
+                    "power_mode": self._power_mode()}
 
     # ---------------- 网络唤醒（设备列表的「唤醒」按钮） ----------------
 

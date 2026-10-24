@@ -185,7 +185,7 @@ def main(argv=None):
     setup_logging(cfg.log_level, cfg.log_json)
 
     log.info("=" * 66)
-    log.info("华为路由器 IPv6 白名单同步 v%s", __version__)
+    log.info("HiRouterCenter v%s · 华为路由器 IPv6 防火墙同步", __version__)
     log.info("路由器 %s  用户 %s  密码 %s", cfg.base_url, cfg.username,
              f"来自 {cfg.password_source}" if cfg.password_source
              else "（未配置，只复用会话）")

@@ -1,14 +1,20 @@
 # -*- coding: utf-8 -*-
-"""通知模块的离线测试：三渠道独立开关与同时推送、URL/报文构造、
-企业微信 key 提取、以及「白名单真有写入才发通知」的同步联动。全程不联网。"""
+"""通知模块离线测试：渠道预设 / 请求渲染 / 事件模型 / 投递策略 / 同步联动。
+
+全程不联网：HTTP 打桩在 notify._post，SMTP 只测参数校验。
+"""
+import json
 import os
 import sys
+import tempfile
+import time
 import unittest
+import urllib.parse
 from unittest import mock
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from app import discover, notify  # noqa: E402
+from app import discover, notify, notify_events as ne, notify_presets as P  # noqa: E402
 from app.config import Config, Rule  # noqa: E402
 from app.sync import Syncer  # noqa: E402
 
@@ -23,10 +29,17 @@ except ImportError:  # noqa: E203
 NAS_MAC = "00:11:22:AA:BB:CC"
 OLD_ADDR = "240e:3a4:48ff:6d10:7173:1ffc:64ed:82c0"
 
+CTX = {
+    "title": "设备已离线",
+    "text": "客厅摄像头 已离线",
+    "level": "normal",
+    "event": "dev_offline",
+    "time": "2026-10-24 18:00:00",
+    "panel": "http://192.168.3.1:6600",
+}
+
 
 def make_cfg(**kw) -> Config:
-    # mac=None = 本机网卡取址路径（_LocalNetStub 已装好假网卡）；
-    # 绑 MAC 的设备规则另有专属测试。
     cfg = Config(
         host="192.168.3.1", username="admin", password="x",
         session_file=None, poll_interval=1,
@@ -37,174 +50,491 @@ def make_cfg(**kw) -> Config:
     return cfg
 
 
-def ntfy_on(**kw) -> Config:
-    kw.setdefault("notify_ntfy_url", "https://ntfy.sh/mytopic")
-    return make_cfg(notify_ntfy_enabled=True, **kw)
-
-
-def gotify_on(**kw) -> Config:
-    kw.setdefault("notify_gotify_url", "https://push.example.com")
-    kw.setdefault("notify_gotify_token", "AppTok123")
-    return make_cfg(notify_gotify_enabled=True, **kw)
-
-
 def wecom_on(**kw) -> Config:
+    """老格式（三开关）建配置 —— 顺便验证迁移路径。"""
     kw.setdefault("notify_wecom_id", "85d3153d-1a2b")
     return make_cfg(notify_wecom_enabled=True, **kw)
 
 
-class WecomKeyTest(unittest.TestCase):
-    def test_bare_id(self):
-        self.assertEqual(
-            notify.extract_wecom_key("85d3153d-1a2b-3c4d-5e6f-778899aabbcc"),
-            "85d3153d-1a2b-3c4d-5e6f-778899aabbcc")
+# --------------------------------------------------------------------------
+# 渠道预设：字段定义与请求渲染
+# --------------------------------------------------------------------------
 
-    def test_full_webhook_url(self):
-        self.assertEqual(
-            notify.extract_wecom_key(
-                "https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key="
-                "85d3153d-1a2b-3c4d-5e6f-778899aabbcc"),
-            "85d3153d-1a2b-3c4d-5e6f-778899aabbcc")
+class PresetSpecTest(unittest.TestCase):
+    def test_eleven_channels_exposed(self):
+        types = [s["t"] for s in P.specs()]
+        self.assertEqual(len(types), 11)
+        for t in ("wecom", "telegram", "bark", "ntfy", "gotify", "dingtalk",
+                  "feishu", "serverchan", "pushplus", "smtp", "webhook"):
+            self.assertIn(t, types)
 
-    def test_empty(self):
-        self.assertEqual(notify.extract_wecom_key(""), "")
-        self.assertEqual(notify.extract_wecom_key(None), "")
+    def test_every_preset_has_label_and_fields(self):
+        for spec in P.specs():
+            self.assertTrue(spec["l"], spec["t"])
+            self.assertTrue(spec["f"], spec["t"])
+            for f in spec["f"]:
+                self.assertIn("k", f)
+                self.assertIn("l", f)
 
+    def test_required_fields_detected(self):
+        self.assertEqual(P.missing_fields("gotify", {}), ["服务器", "应用令牌"])
+        self.assertEqual(P.missing_fields("wecom", {"key": "k"}), [])
 
-class EnableTest(unittest.TestCase):
-    def test_no_channel_enabled_is_noop(self):
-        self.assertEqual(notify.enabled_channels(make_cfg()), [])
-        self.assertEqual(notify.send_all(make_cfg(), "t", "m"), [])
-
-    def test_enabled_channels_order(self):
-        cfg = wecom_on()
-        cfg.notify_ntfy_enabled = True
-        cfg.notify_gotify_enabled = True
-        self.assertEqual(notify.enabled_channels(cfg),
-                         ["ntfy", "gotify", "wecom"])
+    def test_unknown_type_rejected(self):
+        with self.assertRaises(ValueError):
+            P.build_request("nope", {}, CTX)
 
 
-class NtfyTest(unittest.TestCase):
-    def test_topic_in_url_and_bearer(self):
-        cfg = ntfy_on(notify_ntfy_token="tk_xxx")
-        with mock.patch.object(notify, "_post_raw",
-                               return_value=(True, "")) as p:
-            results = notify.send_all(cfg, "标题", "消息")
-        self.assertEqual(results, [("ntfy", True, "")])
-        url, data, headers = p.call_args[0][:3]
-        self.assertEqual(url, "https://ntfy.sh/mytopic")
-        self.assertIn("标题".encode(), data)
-        self.assertIn("消息".encode(), data)
-        self.assertEqual(headers.get("Authorization"), "Bearer tk_xxx")
+class PresetRenderTest(unittest.TestCase):
+    def test_json_body_escapes_quotes_and_newlines(self):
+        """坑 1：正文里的引号 / 换行不转义就是非法 JSON。"""
+        ctx = dict(CTX, text='他说"你好"\n第二行\\反斜杠')
+        req = P.build_request("gotify", {"server": "https://p.example.com",
+                                         "token": "tk"}, ctx)
+        payload = json.loads(req["data"].decode("utf-8"))   # 不能抛
+        self.assertIn('"你好"', payload["message"])
+        self.assertIn("\n", payload["message"])
 
-    def test_default_topic_appended(self):
-        cfg = ntfy_on(notify_ntfy_url="https://ntfy.sh")
-        with mock.patch.object(notify, "_post_raw",
-                               return_value=(True, "")) as p:
-            notify.send_all(cfg, "t", "m")
-        self.assertEqual(p.call_args[0][0], "https://ntfy.sh/ipv6sync")
+    def test_server_not_percent_encoded(self):
+        """坑 2：整串 https:// 被编码连协议头都解析不出来。"""
+        req = P.build_request("bark", {"server": "https://api.day.app",
+                                       "key": "k1"}, CTX)
+        self.assertEqual(req["url"], "https://api.day.app/k1")
 
-    def test_missing_url(self):
-        cfg = ntfy_on(notify_ntfy_url="")
-        results = notify.send_all(cfg, "t", "m")
-        self.assertEqual(results[0][0], "ntfy")
-        self.assertFalse(results[0][1])
-        self.assertIn("服务器地址", results[0][2])
+    def test_telegram_token_keeps_colon(self):
+        req = P.build_request("telegram", {"token": "123:ABC", "chatId": "-1"},
+                              CTX)
+        self.assertIn("/bot123:ABC/sendMessage", req["url"])
 
-
-class GotifyTest(unittest.TestCase):
-    def test_url_and_payload(self):
-        cfg = gotify_on()
-        with mock.patch.object(notify, "_post_json",
-                               return_value=(True, "")) as p:
-            results = notify.send_all(cfg, "标题", "消息")
-        self.assertEqual(results, [("gotify", True, "")])
-        url, payload = p.call_args[0]
-        self.assertTrue(url.startswith("https://push.example.com/message?token=AppTok123"))
-        self.assertEqual(payload["title"], "标题")
-        self.assertEqual(payload["message"], "消息")
-
-    def test_missing_token(self):
-        cfg = gotify_on(notify_gotify_token="")
-        results = notify.send_all(cfg, "t", "m")
-        self.assertFalse(results[0][1])
-        self.assertIn("Token", results[0][2])
-
-
-class WecomTest(unittest.TestCase):
-    def test_payload_and_errcode(self):
-        cfg = wecom_on()
-        with mock.patch.object(notify, "_post_json",
-                               return_value=(True, '{"errcode":0}')) as p:
-            results = notify.send_all(cfg, "标题", "消息")
-        self.assertEqual(results, [("wecom", True, "")])
-        url, payload = p.call_args[0]
-        self.assertIn("key=85d3153d-1a2b", url)
+    def test_wecom_payload_and_mention(self):
+        req = P.build_request("wecom", {"key": "k-1", "mentioned": "138,139"},
+                              CTX)
+        self.assertIn("key=k-1", req["url"])
+        payload = json.loads(req["data"].decode("utf-8"))
         self.assertEqual(payload["msgtype"], "text")
-        self.assertIn("标题", payload["text"]["content"])
+        self.assertIn("设备已离线", payload["text"]["content"])
+        self.assertEqual(payload["text"]["mentioned_mobile_list"],
+                         ["138", "139"])
 
-    def test_business_error_surfacing(self):
-        cfg = wecom_on()
-        with mock.patch.object(
-                notify, "_post_json",
-                return_value=(True,
-                              '{"errcode":93000,"errmsg":"invalid webhook"}')):
-            results = notify.send_all(cfg, "t", "m")
-        self.assertFalse(results[0][1])
-        self.assertIn("93000", results[0][2])
+    def test_ntfy_raw_text_body(self):
+        req = P.build_request("ntfy", {"topic": "t1", "token": "tk_x"}, CTX)
+        self.assertEqual(req["url"], "https://ntfy.sh/t1")
+        self.assertIn("设备已离线".encode(), req["data"])
+        self.assertEqual(req["headers"]["Authorization"], "Bearer tk_x")
 
-    def test_missing_id(self):
-        cfg = wecom_on(notify_wecom_id="")
-        results = notify.send_all(cfg, "t", "m")
-        self.assertFalse(results[0][1])
-        self.assertIn("机器人 ID", results[0][2])
+    def test_serverchan_form_encoded(self):
+        req = P.build_request("serverchan", {"sendkey": "SCT1"}, CTX)
+        form = urllib.parse.parse_qs(req["data"].decode("utf-8"))
+        self.assertEqual(form["title"], ["设备已离线"])
+
+    def test_dingtalk_sign_only_encoded_once(self):
+        """坑 3：签名的 base64 只能 percent 编码一次（%3D 不能变 %253D）。"""
+        req = P.build_request("dingtalk", {"token": "tok", "secret": "SECabc"},
+                              CTX, ts=1700000000)
+        q = urllib.parse.parse_qs(urllib.parse.urlparse(req["url"]).query)
+        self.assertEqual(q["timestamp"], ["1700000000"])
+        sign = q["sign"][0]
+        self.assertNotIn("%", sign, "签名被二次编码了")
+        self.assertTrue(sign.endswith("="), "base64 结尾的 = 应当还在")
+
+    def test_dingtalk_sign_value_is_hmac_of_secret(self):
+        import base64
+        import hashlib
+        import hmac
+        req = P.build_request("dingtalk", {"token": "t", "secret": "SEC"},
+                              CTX, ts=1700000000)
+        q = urllib.parse.parse_qs(urllib.parse.urlparse(req["url"]).query)
+        want = base64.b64encode(hmac.new(b"SEC", b"1700000000\nSEC",
+                                         hashlib.sha256).digest()).decode()
+        self.assertEqual(q["sign"][0], want)
+
+    def test_feishu_sign_goes_into_body(self):
+        req = P.build_request("feishu", {"token": "abc", "secret": "s1"},
+                              CTX, ts=1700000000)
+        payload = json.loads(req["data"].decode("utf-8"))
+        self.assertEqual(payload["timestamp"], "1700000000")
+        self.assertTrue(payload["sign"])
+        self.assertIn("设备已离线", payload["content"]["text"])
+
+    def test_no_secret_means_no_sign_params(self):
+        req = P.build_request("dingtalk", {"token": "t"}, CTX, ts=1)
+        self.assertEqual(req["url"],
+                         "https://oapi.dingtalk.com/robot/send?access_token=t")
+
+    def test_webhook_custom_headers_and_body(self):
+        req = P.build_request("webhook", {
+            "url": "https://e.com/hook", "method": "put",
+            "contentType": "application/json",
+            "headers": '{"X-Event":"{{event}}"}',
+            "body": '{"t":"{{title}}","x":"{{text}}","lv":"{{level}}"}',
+        }, CTX)
+        self.assertEqual(req["method"], "PUT")
+        self.assertEqual(req["headers"]["X-Event"], "dev_offline")
+        payload = json.loads(req["data"].decode("utf-8"))
+        self.assertEqual(payload["t"], "设备已离线")
+        self.assertEqual(payload["lv"], "normal")
+
+    def test_webhook_bad_header_json(self):
+        with self.assertRaises(ValueError):
+            P.build_request("webhook", {"url": "https://e.com",
+                                        "headers": "not json"}, CTX)
+
+    def test_unknown_placeholder_left_alone(self):
+        """用户正文里有花括号不能被吃掉，也不能抛异常。"""
+        req = P.build_request("gotify", {"server": "https://p", "token": "t"},
+                              dict(CTX, text="值 {foo}"))
+        self.assertIn("{foo}", json.loads(req["data"])["message"])
 
 
-class MultiChannelTest(unittest.TestCase):
+class ResponseCheckTest(unittest.TestCase):
+    def test_wecom_errcode(self):
+        self.assertEqual(P.check_response("wecom", '{"errcode":0}'), "")
+        self.assertIn("93000",
+                      P.check_response("wecom", '{"errcode":93000,"errmsg":"x"}'))
+
+    def test_telegram_ok_false(self):
+        self.assertIn("chat not found", P.check_response(
+            "telegram", '{"ok":false,"description":"chat not found"}'))
+        self.assertEqual(P.check_response("telegram", '{"ok":true}'), "")
+
+    def test_feishu_and_pushplus_codes(self):
+        self.assertEqual(P.check_response("feishu", '{"code":0}'), "")
+        self.assertIn("19001", P.check_response(
+            "feishu", '{"code":19001,"msg":"sign match fail"}'))
+        self.assertEqual(P.check_response("pushplus", '{"code":200}'), "")
+        self.assertIn("903", P.check_response(
+            "pushplus", '{"code":903,"msg":"无效的用户token"}'))
+
+    def test_non_json_body_ignored(self):
+        self.assertEqual(P.check_response("wecom", "not json"), "")
+
+
+# --------------------------------------------------------------------------
+# 渠道配置：校验 / 迁移
+# --------------------------------------------------------------------------
+
+class ChannelConfigTest(unittest.TestCase):
+    def test_bad_type_rejected(self):
+        with self.assertRaises(ValueError):
+            notify.normalize_channel({"type": "sms"})
+
+    def test_empty_values_dropped(self):
+        c = notify.normalize_channel({"type": "ntfy", "name": "n",
+                                      "config": {"topic": "t", "token": ""}})
+        self.assertNotIn("token", c["config"])
+        self.assertEqual(c["config"]["topic"], "t")
+
+    def test_wecom_full_url_trimmed_to_key(self):
+        c = notify.normalize_channel({"type": "wecom", "config": {
+            "key": "https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=abc-1"}})
+        self.assertEqual(c["config"]["key"], "abc-1")
+
+    def test_feishu_url_trimmed_to_token(self):
+        c = notify.normalize_channel({"type": "feishu", "config": {
+            "token": "https://open.feishu.cn/open-apis/bot/v2/hook/xyz"}})
+        self.assertEqual(c["config"]["token"], "xyz")
+
+    def test_defaults_filled(self):
+        c = notify.normalize_channel({"type": "bark", "config": {"key": "k"}})
+        self.assertEqual(c["config"]["server"], "https://api.day.app")
+        c = notify.normalize_channel({"type": "ntfy", "config": {"topic": "t"}})
+        self.assertEqual(c["config"]["server"], "https://ntfy.sh")
+
+    def test_legacy_migration(self):
+        cfg = make_cfg(notify_ntfy_enabled=True,
+                       notify_ntfy_url="https://ntfy.sh/mytopic",
+                       notify_ntfy_token="tk",
+                       notify_wecom_enabled=True, notify_wecom_id="k-1",
+                       notify_gotify_enabled=False, notify_gotify_url="")
+        chans = notify.channels(cfg)
+        by = {c["type"]: c for c in chans}
+        self.assertEqual(set(by), {"ntfy", "wecom"})
+        self.assertEqual(by["ntfy"]["config"]["server"], "https://ntfy.sh")
+        self.assertEqual(by["ntfy"]["config"]["topic"], "mytopic")
+        self.assertTrue(by["wecom"]["enabled"])
+
+    def test_new_format_wins_over_legacy(self):
+        cfg = make_cfg(notify_wecom_enabled=True, notify_wecom_id="old")
+        cfg.notify_channels = [{"id": "a1", "type": "bark", "name": "b",
+                                "enabled": True, "config": {"key": "k"}}]
+        self.assertEqual([c["type"] for c in notify.channels(cfg)], ["bark"])
+
+    def test_save_rejects_bad_list(self):
+        cfg = make_cfg()
+        with self.assertRaises(ValueError):
+            notify.save(cfg, "nope")
+        with self.assertRaises(ValueError):
+            notify.save(cfg, [{"type": "unknown-type"}])
+
+    def test_save_assigns_unique_ids(self):
+        cfg = make_cfg()
+        got = notify.save(cfg, [{"type": "ntfy", "config": {"topic": "a"}},
+                                {"type": "ntfy", "config": {"topic": "b"}}])
+        self.assertEqual(len(got), 2)
+        self.assertNotEqual(got[0]["id"], got[1]["id"])
+
+
+# --------------------------------------------------------------------------
+# 投递：多渠道路由与容错
+# --------------------------------------------------------------------------
+
+class DeliverTest(unittest.TestCase):
+    def test_no_channel_is_noop(self):
+        self.assertEqual(notify.send_all(make_cfg(), CTX), [])
+
     def test_all_three_push_together(self):
-        cfg = ntfy_on(notify_ntfy_token="tk_x")
-        cfg.notify_gotify_enabled = True
-        cfg.notify_gotify_url = "https://push.example.com"
-        cfg.notify_gotify_token = "AppTok123"
-        cfg.notify_wecom_enabled = True
-        cfg.notify_wecom_id = "k-1"
-        with mock.patch.object(notify, "_post_raw", return_value=(True, "")), \
-             mock.patch.object(notify, "_post_json",
-                               return_value=(True, '{"errcode":0}')):
-            results = notify.send_all(cfg, "t", "m")
-        self.assertEqual([r[0] for r in results], ["ntfy", "gotify", "wecom"])
-        self.assertTrue(all(r[1] for r in results))
+        cfg = make_cfg(notify_ntfy_enabled=True, notify_ntfy_url="https://n/t",
+                       notify_wecom_enabled=True, notify_wecom_id="k",
+                       notify_gotify_enabled=True,
+                       notify_gotify_url="https://g", notify_gotify_token="t")
+        with mock.patch.object(notify, "_post", return_value=(True, "{}")):
+            res = notify.send_all(cfg, CTX)
+        self.assertEqual([r["type"] for r in res], ["ntfy", "gotify", "wecom"])
+        self.assertTrue(all(r["ok"] for r in res))
 
-    def test_one_failure_does_not_block_others(self):
-        cfg = ntfy_on()
-        cfg.notify_wecom_enabled = True
-        cfg.notify_wecom_id = "k-1"
-        with mock.patch.object(notify, "_post_raw", return_value=(True, "")), \
-             mock.patch.object(notify, "_post_json",
+    def test_business_error_marked_failed(self):
+        cfg = make_cfg(notify_wecom_enabled=True, notify_wecom_id="k")
+        with mock.patch.object(notify, "_post",
                                return_value=(True, '{"errcode":93000}')):
-            results = notify.send_all(cfg, "t", "m")
-        by_ch = dict((r[0], r[1:]) for r in results)
-        self.assertTrue(by_ch["ntfy"][0])
-        self.assertFalse(by_ch["wecom"][0])
+            res = notify.send_all(cfg, CTX)
+        self.assertFalse(res[0]["ok"])
+        self.assertIn("93000", res[0]["error"])
 
-    def test_channel_exception_caught(self):
-        cfg = wecom_on()
-        with mock.patch.object(notify, "_post_json",
+    def test_http_failure_keeps_peer_working(self):
+        cfg = make_cfg(notify_ntfy_enabled=True, notify_ntfy_url="https://n/t",
+                       notify_wecom_enabled=True, notify_wecom_id="k")
+
+        def fake_post(url, data, headers, method="POST"):
+            if "qyapi" in url:
+                return False, "connection refused"
+            return True, ""
+        with mock.patch.object(notify, "_post", side_effect=fake_post):
+            res = notify.send_all(cfg, CTX)
+        by = {r["type"]: r for r in res}
+        self.assertTrue(by["ntfy"]["ok"])
+        self.assertFalse(by["wecom"]["ok"])
+
+    def test_exception_never_escapes(self):
+        cfg = make_cfg(notify_wecom_enabled=True, notify_wecom_id="k")
+        with mock.patch.object(notify, "_post",
                                side_effect=RuntimeError("boom")):
-            results = notify.send_all(cfg, "t", "m")
-        self.assertEqual(results[0][0], "wecom")
-        self.assertFalse(results[0][1])
-        self.assertIn("boom", results[0][2])
+            res = notify.send_all(cfg, CTX)
+        self.assertFalse(res[0]["ok"])
+        self.assertIn("boom", res[0]["error"])
 
+    def test_incomplete_channel_reported_not_sent(self):
+        cfg = make_cfg()
+        cfg.notify_channels = [{"id": "x", "type": "gotify", "name": "g",
+                                "enabled": True, "config": {"server": ""}}]
+        with mock.patch.object(notify, "_post") as p:
+            res = notify.send_all(cfg, CTX)
+        p.assert_not_called()
+        self.assertFalse(res[0]["ok"])
+        self.assertIn("配置不全", res[0]["error"])
+
+    def test_disabled_channel_skipped(self):
+        cfg = make_cfg()
+        cfg.notify_channels = [{"id": "x", "type": "ntfy", "name": "n",
+                                "enabled": False,
+                                "config": {"server": "https://n", "topic": "t"}}]
+        self.assertEqual(notify.send_all(cfg, CTX), [])
+
+    def test_smtp_missing_fields(self):
+        cfg = make_cfg()
+        cfg.notify_channels = [{"id": "m", "type": "smtp", "name": "mail",
+                                "enabled": True,
+                                "config": {"host": "smtp.qq.com"}}]
+        res = notify.send_all(cfg, CTX)
+        self.assertFalse(res[0]["ok"])
+        self.assertIn("配置不全", res[0]["error"])
+
+
+# --------------------------------------------------------------------------
+# 事件模型：表 / 静默时段 / 去重 / 历史
+# --------------------------------------------------------------------------
+
+class EventTableTest(unittest.TestCase):
+    def test_fourteen_events(self):
+        self.assertEqual(len(ne.EVENTS), 14)
+        codes = [e[0] for e in ne.EVENTS]
+        self.assertEqual(len(codes), len(set(codes)), "事件代码不能重复")
+
+    def test_kid_window_event_removed(self):
+        """「儿童上网时段已调整」根本感知不到，必须不在表里。"""
+        for code, _g, title, _lv, _d in ne.EVENTS:
+            self.assertNotIn("儿童", title)
+
+    def test_titles_are_short(self):
+        for code, _g, title, _lv, _d in ne.EVENTS:
+            self.assertLessEqual(len(title), 14, f"{code} 标题太长：{title}")
+
+    def test_defaults_and_override(self):
+        cfg = make_cfg()
+        self.assertTrue(ne.event_enabled(cfg, "fw_add"))
+        self.assertFalse(ne.event_enabled(cfg, "dev_new"))
+        cfg.notify_events = {"dev_new": True, "fw_add": False}
+        self.assertTrue(ne.event_enabled(cfg, "dev_new"))
+        self.assertFalse(ne.event_enabled(cfg, "fw_add"))
+
+    def test_unknown_code_ignored(self):
+        self.assertEqual(ne.normalize_events({"nope": True, "fw_add": False}),
+                         {"fw_add": False})
+
+    def test_table_flags_reflect_config(self):
+        cfg = make_cfg(notify_events={"fw_add": False})
+        by = {e["code"]: e for e in ne.events_table(cfg)}
+        self.assertFalse(by["fw_add"]["on"])
+        self.assertTrue(by["fw_add"]["default"])
+
+
+class QuietHoursTest(unittest.TestCase):
+    def test_parse(self):
+        self.assertEqual(ne.parse_quiet("23:00-07:00"), (1380, 420))
+        self.assertIsNone(ne.parse_quiet(""))
+        self.assertIsNone(ne.parse_quiet("乱写"))
+
+    def _at(self, hh, mm):
+        t = time.localtime()
+        return time.mktime((t.tm_year, t.tm_mon, t.tm_mday, hh, mm, 0, 0, 0, -1))
+
+    def test_cross_midnight(self):
+        self.assertTrue(ne.in_quiet("23:00-07:00", self._at(1, 30)))
+        self.assertTrue(ne.in_quiet("23:00-07:00", self._at(23, 30)))
+        self.assertFalse(ne.in_quiet("23:00-07:00", self._at(12, 0)))
+
+    def test_same_day(self):
+        self.assertTrue(ne.in_quiet("12:00-14:00", self._at(13, 0)))
+        self.assertFalse(ne.in_quiet("12:00-14:00", self._at(15, 0)))
+
+    def test_normalize(self):
+        self.assertEqual(ne.normalize_quiet("23：00-7:00"), "23:00-07:00")
+        self.assertEqual(ne.normalize_quiet(""), "")
+        with self.assertRaises(ValueError):
+            ne.normalize_quiet("晚上")
+
+    def test_urgent_bypasses_quiet(self):
+        cfg = make_cfg(notify_quiet="00:00-23:59",
+                       notify_wecom_enabled=True, notify_wecom_id="k")
+        with mock.patch.object(notify, "_post", return_value=(True, "")) as p:
+            ne.dispatch(cfg, "fw_update", "普通事件")      # 被静默
+            ne.dispatch(cfg, "fw_fail", "紧急事件")        # 照发
+        self.assertEqual(p.call_count, 1)
+        self.assertIn("紧急".encode(), p.call_args[0][1])
+
+
+class DedupeTest(unittest.TestCase):
+    def setUp(self):
+        ne.reset_dedupe()
+        self.cfg = make_cfg(notify_wecom_enabled=True, notify_wecom_id="k",
+                            notify_dedupe=300)
+
+    def tearDown(self):
+        ne.reset_dedupe()
+
+    def test_same_subject_suppressed(self):
+        with mock.patch.object(notify, "_post", return_value=(True, "")) as p:
+            ne.dispatch(self.cfg, "dev_offline", "a", subject="客厅摄像头")
+            ne.dispatch(self.cfg, "dev_offline", "a", subject="客厅摄像头")
+            ne.dispatch(self.cfg, "dev_offline", "b", subject="卧室电视")
+        self.assertEqual(p.call_count, 2)
+
+    def test_zero_window_disables(self):
+        self.cfg.notify_dedupe = 0
+        with mock.patch.object(notify, "_post", return_value=(True, "")) as p:
+            ne.dispatch(self.cfg, "dev_offline", "a", subject="x")
+            ne.dispatch(self.cfg, "dev_offline", "a", subject="x")
+        self.assertEqual(p.call_count, 2)
+
+
+class DispatchGateTest(unittest.TestCase):
+    def test_master_switch_off(self):
+        cfg = make_cfg(notify_enabled=False, notify_wecom_enabled=True,
+                       notify_wecom_id="k")
+        with mock.patch.object(notify, "_post") as p:
+            self.assertEqual(ne.dispatch(cfg, "fw_add", "x"), [])
+        p.assert_not_called()
+
+    def test_event_off(self):
+        cfg = make_cfg(notify_wecom_enabled=True, notify_wecom_id="k",
+                       notify_events={"fw_add": False})
+        with mock.patch.object(notify, "_post") as p:
+            self.assertEqual(ne.dispatch(cfg, "fw_add", "x"), [])
+        p.assert_not_called()
+
+    def test_force_overrides_everything(self):
+        cfg = make_cfg(notify_enabled=False, notify_quiet="00:00-23:59",
+                       notify_wecom_enabled=True, notify_wecom_id="k")
+        with mock.patch.object(notify, "_post", return_value=(True, "")) as p:
+            ne.dispatch(cfg, "fw_add", "x", force=True)
+        self.assertEqual(p.call_count, 1)
+
+    def test_title_comes_from_event(self):
+        cfg = make_cfg(notify_wecom_enabled=True, notify_wecom_id="k")
+        with mock.patch.object(notify, "_post", return_value=(True, "")) as p:
+            ne.dispatch(cfg, "dev_online", "NAS 上线了", subject="nas")
+        payload = json.loads(p.call_args[0][1].decode("utf-8"))
+        self.assertTrue(payload["text"]["content"].startswith("设备已上线"))
+
+
+class HistoryTest(unittest.TestCase):
+    def setUp(self):
+        ne.reset_dedupe()
+        self.tmp = tempfile.TemporaryDirectory()
+        self.cfg = make_cfg(state_file=os.path.join(self.tmp.name, "state.json"),
+                            notify_wecom_enabled=True, notify_wecom_id="k",
+                            notify_history_max=50, notify_dedupe=0)
+
+    def tearDown(self):
+        ne.reset_dedupe()
+        self.tmp.cleanup()
+
+    def test_records_one_row_per_channel(self):
+        with mock.patch.object(notify, "_post", return_value=(True, "")):
+            ne.dispatch(self.cfg, "fw_add", "NAS 已加入白名单")
+        rows = ne.read_history(self.cfg)
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]["title"], "已加入 IPv6 白名单")
+        self.assertTrue(rows[0]["ok"])
+        self.assertIn("NAS", rows[0]["text"])
+
+    def test_failure_recorded(self):
+        with mock.patch.object(notify, "_post", return_value=(False, "nope")):
+            ne.dispatch(self.cfg, "fw_add", "x")
+        rows = ne.read_history(self.cfg)
+        self.assertFalse(rows[0]["ok"])
+        self.assertEqual(rows[0]["error"], "nope")
+
+    def test_trim_to_max(self):
+        self.cfg.notify_history_max = 10
+        with mock.patch.object(notify, "_post", return_value=(True, "")):
+            for i in range(15):
+                ne.dispatch(self.cfg, "fw_add", f"第 {i} 条")
+        rows = ne.read_history(self.cfg)
+        self.assertEqual(len(rows), 10)
+        self.assertIn("第 14 条", rows[-1]["text"])
+
+    def test_clear(self):
+        with mock.patch.object(notify, "_post", return_value=(True, "")):
+            ne.dispatch(self.cfg, "fw_add", "x")
+        ne.clear_history(self.cfg)
+        self.assertEqual(ne.read_history(self.cfg), [])
+
+    def test_max_clamped(self):
+        self.cfg.notify_history_max = 9999
+        self.assertEqual(ne.history_max(self.cfg), 200)
+        self.cfg.notify_history_max = 1
+        self.assertEqual(ne.history_max(self.cfg), 10)
+
+    def test_path_next_to_state_file(self):
+        p = ne.history_path(os.path.join("X:" + os.sep, "data", "state.json"))
+        self.assertEqual(os.path.basename(p), "notify.jsonl")
+
+
+# --------------------------------------------------------------------------
+# 与同步循环的联动
+# --------------------------------------------------------------------------
 
 class _LocalNetStub:
-    """给「本机网卡」装上假数据。
-
-    同步现在固定读本机网卡（/proc/net/if_inet6），测试机上没有那个文件 ——
-    不装桩的话每一轮都停在「没发现地址」，通知自然永远不会触发，用例会
-    以一种很容易误读的方式失败。
-    """
-
     def setUp(self):
         self._net_saved = (discover.local_candidates, discover.temporary_set)
         discover.local_candidates = lambda: [discover.canon(OLD_ADDR)]
@@ -215,66 +545,88 @@ class _LocalNetStub:
 
 
 class SyncNotifyIntegrationTest(_LocalNetStub, unittest.TestCase):
-    """白名单真有写入才发通知；没写入/演练模式/没启用渠道不发。"""
+    """白名单真有写入才发通知；没写入 / 演练模式 / 关掉事件都不发。"""
+
+    def setUp(self):
+        super().setUp()
+        ne.reset_dedupe()
+        self.tmp = tempfile.TemporaryDirectory()
+
+    def tearDown(self):
+        ne.reset_dedupe()
+        self.tmp.cleanup()
+        super().tearDown()
+
+    def _cfg(self, **kw):
+        kw.setdefault("state_file",
+                      os.path.join(self.tmp.name, "state.json"))
+        kw.setdefault("notify_wecom_id", "85d3153d-1a2b")
+        kw.setdefault("notify_wecom_enabled", True)
+        return make_cfg(**kw)
 
     def _tick(self, cfg):
-        r = FakeRouter(entries=[])
-        s = Syncer(cfg, r)
+        s = Syncer(cfg, FakeRouter(entries=[]))
         with mock.patch.object(notify, "send_all",
-                               return_value=[("wecom", True, "")]) as p:
+                               return_value=[{"id": "1", "name": "企业微信",
+                                              "type": "wecom", "ok": True,
+                                              "error": ""}]) as p:
             s.tick()
         return p
 
     def test_notify_sent_on_writes(self):
-        cfg = wecom_on()
-        p = self._tick(cfg)
+        p = self._tick(self._cfg())
         self.assertEqual(p.call_count, 1)
-        title, msg = p.call_args[0][1], p.call_args[0][2]
-        self.assertEqual(title, "IPv6 白名单已更新")
-        self.assertIn("NAS", msg)
-        self.assertIn(OLD_ADDR, msg)
+        ctx = p.call_args[0][1]
+        self.assertEqual(ctx["title"], "已加入 IPv6 白名单")
+        self.assertIn("NAS", ctx["text"])
+        self.assertIn(OLD_ADDR, ctx["text"])
 
-    def test_custom_title_used(self):
-        cfg = wecom_on()
-        cfg.notify_title = "家庭 NAS 上线提醒"
+    def test_event_title_not_user_title(self):
+        """标题由事件决定：老配置里的自定义标题不再影响推送。"""
+        cfg = self._cfg(notify_title="家庭 NAS 上线提醒")
         p = self._tick(cfg)
-        title, msg = p.call_args[0][1], p.call_args[0][2]
-        self.assertEqual(title, "家庭 NAS 上线提醒")
-        self.assertIn("NAS", msg)
+        self.assertNotEqual(p.call_args[0][1]["title"], "家庭 NAS 上线提醒")
 
     def test_no_notify_when_unchanged(self):
-        cfg = wecom_on()
+        cfg = self._cfg()
         entries = [{"Name": "NAS", "LocalIp": OLD_ADDR,
                     "RemoteIp": "::/0", "Port": -1, "ID": "id1"}]
         s = Syncer(cfg, FakeRouter(entries=entries))
-        with mock.patch.object(notify, "send_all",
-                               return_value=[("wecom", True, "")]) as p:
+        with mock.patch.object(notify, "send_all", return_value=[]) as p:
             s.tick()
         p.assert_not_called()
 
     def test_no_notify_when_no_channel(self):
-        # 没启用任何渠道：send_all 返回空列表，什么都不推，tick 正常完成
-        s = Syncer(make_cfg(), FakeRouter(entries=[]))
+        s = Syncer(self._cfg(), FakeRouter(entries=[]))
         with mock.patch.object(notify, "send_all", return_value=[]) as p:
             snap = s.tick()
         self.assertEqual(p.call_count, 1)
         self.assertTrue(snap["ok"])
 
     def test_no_notify_in_dry_run(self):
-        cfg = wecom_on(dry_run=True)
+        p = self._tick(self._cfg(dry_run=True))
+        p.assert_not_called()
+
+    def test_event_disabled_suppresses(self):
+        cfg = self._cfg(notify_events={"fw_add": False, "fw_update": False})
         p = self._tick(cfg)
         p.assert_not_called()
 
     def test_notify_failure_never_breaks_tick(self):
-        cfg = wecom_on()
-        r = FakeRouter(entries=[])
-        s = Syncer(cfg, r)
+        cfg = self._cfg()
+        s = Syncer(cfg, FakeRouter(entries=[]))
         with mock.patch.object(notify, "send_all",
-                               return_value=[("wecom", False, "网络炸了")]):
-            snap = s.tick()
+                               side_effect=RuntimeError("boom")):
+            snap = s.tick()          # 不能抛
         self.assertTrue(snap["ok"])
-        self.assertEqual(snap["rules"]["NAS"]["action"], "created")
+
+    def test_device_baseline_round_sends_nothing(self):
+        """第一轮只建基线：不能把「所有设备同时上线」糊一脸。"""
+        s = Syncer(self._cfg(), FakeRouter(entries=[]))
+        self.assertIsNone(s._dev_state)
+        s._track_devices({})
+        self.assertEqual(s._dev_state, {})       # 基线建好了，没发通知
 
 
 if __name__ == "__main__":
-    unittest.main(verbosity=2)
+    unittest.main()

@@ -689,7 +689,7 @@ class WebUITest(unittest.TestCase):
     def test_page_served_and_version_injected(self):
         code, body, hdr = call(self.base, "/", raw=True)
         self.assertEqual(code, 200)
-        self.assertIn("IPv6 白名单同步", body)
+        self.assertIn("<title>HiRouterCenter</title>", body)
         self.assertNotIn("__APP_VERSION__", body)
         self.assertIn("no-store", hdr.get("Cache-Control", ""))
         self.assertIn("Content-Security-Policy", hdr)

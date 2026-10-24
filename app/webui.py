@@ -175,7 +175,8 @@ class WebUI:
                 "text/html; charset=utf-8", csp=True)
 
         if method == "GET" and route == "/api/version":
-            return handler.send_json({"name": "ipv6sync", "version": _version()})
+            return handler.send_json({"name": "HiRouterCenter",
+                                      "version": _version()})
 
         if method == "POST" and route == "/api/login":
             return self._login(handler, body, ip)
@@ -261,6 +262,39 @@ class WebUI:
                     self.node.update_whitelist_entry(_json_body(body)))
             if method == "POST" and route == "/api/notify/test":
                 return handler.send_json(self.node.test_notify())
+            # ---- 通知：渠道 / 事件订阅 / 策略 / 推送历史 ----
+            if method == "GET" and route == "/api/notify":
+                return handler.send_json(self.node.notify_view())
+            if method == "POST" and route == "/api/notify/channels":
+                return handler.send_json(
+                    self.node.save_channels(_json_body(body).get("channels")))
+            if method == "POST" and route == "/api/notify/channel/test":
+                return handler.send_json(
+                    self.node.test_channel(_json_body(body).get("channel") or {}))
+            if method == "POST" and route == "/api/notify/policy":
+                return handler.send_json(
+                    self.node.save_notify_policy(_json_body(body)))
+            if method == "GET" and route == "/api/notify/history":
+                return handler.send_json(self.node.notify_history())
+            if method == "POST" and route == "/api/notify/history/clear":
+                return handler.send_json(self.node.clear_notify_history())
+            if method == "POST" and route == "/api/notify/dedupe/reset":
+                return handler.send_json(self.node.reset_notify_dedupe())
+            # ---- 路由器信息卡 / 快捷操作 / 设备类型 ----
+            if method == "GET" and route == "/api/router/info":
+                return handler.send_json(self.node.router_info())
+            if method == "POST" and route == "/api/router/action":
+                data = _json_body(body)
+                return handler.send_json(self.node.router_action(
+                    data.get("kind"), data.get("value")))
+            if method == "GET" and route == "/api/host/types":
+                from . import devtypes
+                return handler.send_json({"ok": True, "types": [
+                    {"id": t, "name": n} for t, n in devtypes.TYPES]})
+            if method == "POST" and route == "/api/host/type":
+                data = _json_body(body)
+                return handler.send_json(self.node.set_host_type(
+                    data.get("mac"), data.get("type")))
             # ---- 计划任务（读不需要动作，写全部要求登录 + 同源，已在上方拦过） ----
             if method == "GET" and route == "/api/tasks":
                 return handler.send_json(self.node.tasks_view())

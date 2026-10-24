@@ -515,8 +515,25 @@ class Tasks:
         self._items: list[dict] = []
         self._quiet_until = 0.0
         self._running = ""          # 正在执行的任务 id
+        # 任务结果的事件回调（Node 装上）：on_event(code, text, subject)
+        self.on_event = None
         with self._lock:
             self._load()
+
+    def defer(self, seconds: float) -> None:
+        """外部（网页快捷操作）挂静默期：这段时间内不跑计划任务。"""
+        if seconds > 0:
+            self._set_quiet(seconds)
+
+    def _event(self, code: str, text: str, subject: str = "") -> None:
+        """任务结果推一条通知。回调没装 / 回调里出错都绝不影响调度。"""
+        cb = getattr(self, "on_event", None)
+        if not cb:
+            return
+        try:
+            cb(code, text, subject)
+        except Exception as e:  # noqa: BLE001
+            log.warning("任务事件推送失败（%s）：%s", code, e)
 
     # ---------- 落盘 ----------
 
@@ -690,8 +707,17 @@ class Tasks:
             if quiet > 0:
                 self._set_quiet(quiet)
             log.info("计划任务「%s」执行成功：%s", task["name"], res.get("msg"))
+            when = (task.get("last_run_at") or "")[11:16]
+            self._event("task_ok",
+                        f"{task['name']} 于 {when} 执行成功："
+                        f"{res.get('msg') or KINDS.get(task['kind'], '')}",
+                        subject=task["name"])
         else:
             log.warning("计划任务「%s」执行失败：%s", task["name"], res.get("msg"))
+            self._event("task_fail",
+                        f"{task['name']} 执行失败："
+                        f"{res.get('msg') or '路由器没有响应'}",
+                        subject=task["name"])
         return {"ok": bool(res.get("ok")), "msg": str(res.get("msg") or ""),
                 "task": dict(task)}
 
@@ -740,6 +766,7 @@ class Tasks:
         """
         now = now or time.time()
         out = []
+        when: list = []          # (任务名, 计划点 HH:MM)，只给通知文案用
         with self._lock:
             for t in self._items:
                 if not t.get("enabled", True):
@@ -759,8 +786,13 @@ class Tasks:
                 t["last_ok"] = True
                 t["last_msg"] = "已错过（容器当时没在运行）"
                 out.append(t["name"])
+                when.append((t["name"], time.strftime(
+                    "%H:%M", time.localtime(slot))))
             if out:
                 self._save_locked()
-        for n in out:
+        for n, hhmm in when:
             log.warning("计划任务「%s」的计划点已错过 —— 不补跑", n)
+            self._event("task_miss",
+                        f"{n} 的计划点（{hhmm}）已经过了，容器当时没在运行。",
+                        subject=n)
         return out

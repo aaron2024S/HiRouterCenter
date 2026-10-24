@@ -114,31 +114,40 @@ FIELDS: tuple = (
           attr="events_max", min=10, max=5000, hidden=True),
     # ---- 通知设置（三渠道互相独立，启用几个就同时推几个） ----
     Field("NOTIFY_TITLE", "通知标题", G_NOTIFY, "str", "IPv6 白名单已更新",
-          attr="notify_title",
+          attr="notify_title", hidden=True,
           help="三个渠道共用的消息标题；企业微信和 ntfy 会把它显示为正文第一行。"
                "发测试通知时标题末尾自动加「（测试）」"),
     Field("NTFY_ENABLED", "启用 ntfy", G_NOTIFY, "bool", "false",
-          attr="notify_ntfy_enabled",
+          attr="notify_ntfy_enabled", hidden=True,
           help="防火墙白名单每次被本程序修改后推送一条变更消息"),
     Field("NTFY_URL", "ntfy 服务器地址", G_NOTIFY, "str", "",
-          attr="notify_ntfy_url", placeholder="https://ntfy.sh/mytopic",
+          attr="notify_ntfy_url", placeholder="https://ntfy.sh/mytopic", hidden=True,
           help="建议带上主题（地址路径）；不写主题默认发到 ipv6sync"),
     Field("NTFY_TOKEN", "ntfy Token", G_NOTIFY, "secret", "",
-          attr="notify_ntfy_token", secret=True, placeholder="留空表示不修改",
+          attr="notify_ntfy_token", secret=True, placeholder="留空表示不修改", hidden=True,
           help="ntfy 的访问令牌（tk_ 开头）；服务器不开鉴权可留空"),
     Field("GOTIFY_ENABLED", "启用 gotify", G_NOTIFY, "bool", "false",
-          attr="notify_gotify_enabled"),
+          attr="notify_gotify_enabled", hidden=True),
     Field("GOTIFY_URL", "gotify 服务器地址", G_NOTIFY, "str", "",
-          attr="notify_gotify_url", placeholder="https://push.example.com",
+          attr="notify_gotify_url", placeholder="https://push.example.com", hidden=True,
           help="只填到根路径，不用带 /message"),
     Field("GOTIFY_TOKEN", "gotify 应用 Token", G_NOTIFY, "secret", "",
-          attr="notify_gotify_token", secret=True, placeholder="留空表示不修改",
+          attr="notify_gotify_token", secret=True, placeholder="留空表示不修改", hidden=True,
           help="gotify 应用页面里生成的 Token，必填"),
     Field("WECOM_ENABLED", "启用企业微信", G_NOTIFY, "bool", "false",
-          attr="notify_wecom_enabled"),
+          attr="notify_wecom_enabled", hidden=True),
     Field("WECOM_ID", "企业微信机器人 ID", G_NOTIFY, "str", "",
-          attr="notify_wecom_id", placeholder="85d3153d-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
+          attr="notify_wecom_id", placeholder="85d3153d-xxxx-xxxx-xxxx-xxxxxxxxxxxx", hidden=True,
           help="群机器人 webhook 里 key= 后面那段；直接粘贴整个 webhook 地址也可以"),
+    # ---- 通知：渠道列表 / 事件订阅 / 投递策略（都在「通知」页自己的界面里改） ----
+    Field("NOTIFY_ENABLED", "启用通知推送", G_NOTIFY, "bool", "true",
+          attr="notify_enabled", hidden=True),
+    Field("NOTIFY_QUIET", "静默时段", G_NOTIFY, "str", "",
+          attr="notify_quiet", hidden=True),
+    Field("NOTIFY_DEDUPE", "同事件去重窗口（秒）", G_NOTIFY, "int", "300",
+          attr="notify_dedupe", min=0, max=86400, hidden=True),
+    Field("NOTIFY_HISTORY_MAX", "推送历史保留条数", G_NOTIFY, "int", "50",
+          attr="notify_history_max", min=10, max=200, hidden=True),
 )
 
 BY_KEY = {f.key: f for f in FIELDS}
@@ -155,6 +164,11 @@ _FALSE = ("0", "false", "no", "n", "off")
 # 白名单自动维护规则（网页「IPv6 防火墙白名单」卡管理）在 overlay 里的键。
 # 不进 FIELDS 表单 —— 它是列表结构，由白名单页的弹窗增删改。
 RULES_KEY = "RULES"
+
+# 通知渠道列表（数组）与事件订阅（对象）在 overlay 里的键 —— 结构和 RULES 一样，
+# 不进 FIELDS 表单（由「通知」页的界面增删改），但校验层必须认识它们。
+CHANNELS_KEY = "NOTIFY_CHANNELS"
+NOTIFY_EVENTS_KEY = "NOTIFY_EVENTS"
 
 # 旧版本把单条规则摊在四个扁平键里（网页表单 + 环境变量），已全部下线；
 # 读设置文件时自动迁移成 RULES，绝不能让用户此前填的配置悄悄丢失。
@@ -290,7 +304,8 @@ def validate_overlay(data: dict, strict: bool = True) -> dict:
     if not isinstance(data, dict):
         raise SettingsError("提交的内容不是一个对象")
     out: dict = {}
-    unknown = [k for k in data if k not in BY_KEY and k != RULES_KEY]
+    special = (RULES_KEY, CHANNELS_KEY, NOTIFY_EVENTS_KEY)
+    unknown = [k for k in data if k not in BY_KEY and k not in special]
     if unknown and strict:
         raise SettingsError("不认识的设置项：" + ", ".join(sorted(unknown)))
     if unknown:
@@ -299,6 +314,26 @@ def validate_overlay(data: dict, strict: bool = True) -> dict:
     for k, v in data.items():
         if k == RULES_KEY:
             out[RULES_KEY] = _validate_rules(v, strict)
+            continue
+        if k == CHANNELS_KEY:
+            from . import notify as _notify          # 延迟导入：只依赖标准库
+            if not isinstance(v, list):
+                if strict:
+                    raise SettingsError("通知渠道必须是数组")
+                continue
+            kept = []
+            for it in v:
+                try:
+                    kept.append(_notify.normalize_channel(it))
+                except ValueError as e:
+                    if strict:
+                        raise SettingsError(str(e)) from None
+                    log.warning("忽略设置文件里不合法的通知渠道：%s", e)
+            out[k] = kept
+            continue
+        if k == NOTIFY_EVENTS_KEY:
+            from . import notify_events as _ne
+            out[k] = _ne.normalize_events(v)
             continue
         f = BY_KEY.get(k)
         if f is None:              # 非严格路径才会走到：旧版本残留项
@@ -325,6 +360,15 @@ def validate_overlay(data: dict, strict: bool = True) -> dict:
                     raise SettingsError(
                         f"{name} 服务器地址要以 http:// 或 https:// 开头，"
                         "如 https://ntfy.sh/mytopic")
+            if f.key == "NOTIFY_QUIET":
+                from . import notify_events as _ne
+                try:
+                    cv = _ne.normalize_quiet(cv)
+                except ValueError as e:
+                    if strict:
+                        raise SettingsError(str(e)) from None
+                    log.warning("静默时段 %r 不合法（%s），按不静默处理", cv, e)
+                    cv = ""
             if f.key == "WECOM_ID" and cv:
                 # 粘贴整个 webhook 地址也行，只留 key= 后面的 ID
                 s = str(cv)
@@ -421,6 +465,12 @@ def apply_overlay(cfg, overlay: dict) -> None:
             cfg.rules = [Rule(name=r["name"], mac=r["mac"] or None,
                               port=None if r["port"] in ("", "-1") else r["port"],
                               remote_ip=r["remote_ip"]) for r in (val or [])]
+            continue
+        if key == CHANNELS_KEY:
+            cfg.notify_channels = list(val or [])
+            continue
+        if key == NOTIFY_EVENTS_KEY:
+            cfg.notify_events = dict(val or {})
             continue
         f = BY_KEY.get(key)
         if f is None:

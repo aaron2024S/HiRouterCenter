@@ -1,9 +1,9 @@
 # 纯标准库实现，不需要任何 pip 依赖 —— 镜像因此可以非常小、构建也不需要联网装包
 FROM python:3.12-alpine
 
-LABEL org.opencontainers.image.title="huawei-ipv6-trustlist-sync" \
-      org.opencontainers.image.description="发现 NAS 自身 IPv6 变化并同步到华为路由器 IPv6 防火墙白名单" \
-      org.opencontainers.image.version="1.1.2"
+LABEL org.opencontainers.image.title="HiRouterCenter" \
+      org.opencontainers.image.description="华为路由器控制中心：IPv6 防火墙同步、设备管理与计划任务，含通知推送" \
+      org.opencontainers.image.version="1.2.0"
 
 ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \

@@ -119,16 +119,26 @@ class Config:
     login_backoff_max: int = 21600     # 秒，上限 6 小时
     net_retry_delay: int = 15          # 网络类错误的重试间隔
 
-    # --- 通知（防火墙白名单变更后推送；三渠道独立，可同时启用） ---
-    notify_title: str = "IPv6 白名单已更新"  # 三渠道共用的消息标题
-    notify_ntfy_enabled: bool = False   # ntfy 渠道开关
-    notify_ntfy_url: str = ""           # ntfy 服务器地址（建议带主题）
-    notify_ntfy_token: str = ""         # ntfy 访问令牌（不开鉴权可留空）
-    notify_gotify_enabled: bool = False # gotify 渠道开关
-    notify_gotify_url: str = ""         # gotify 服务器地址（根路径）
-    notify_gotify_token: str = ""       # gotify 应用 Token
-    notify_wecom_enabled: bool = False  # 企业微信渠道开关
-    notify_wecom_id: str = ""           # 企业微信机器人 ID（webhook key= 后那串）
+    # --- 通知 ---
+    # 新模型：渠道列表（每个渠道一条配置）+ 事件订阅 + 投递策略。
+    # 标题不再让用户填，由事件决定（见 notify_events.EVENTS）。
+    notify_enabled: bool = True         # 总开关
+    notify_channels: list = field(default_factory=list)   # 渠道列表
+    notify_events: dict = field(default_factory=dict)     # 事件代码 → 是否推送
+    notify_quiet: str = ""              # 静默时段 HH:MM-HH:MM，空 = 不静默
+    notify_dedupe: int = 300            # 同事件同主体去重窗口（秒）
+    notify_history_max: int = 50        # 推送历史保留条数（默认 50，上限 200）
+
+    # --- 通知（老格式，仅用于一次性迁移到 notify_channels） ---
+    notify_title: str = "IPv6 白名单已更新"
+    notify_ntfy_enabled: bool = False
+    notify_ntfy_url: str = ""
+    notify_ntfy_token: str = ""
+    notify_gotify_enabled: bool = False
+    notify_gotify_url: str = ""
+    notify_gotify_token: str = ""
+    notify_wecom_enabled: bool = False
+    notify_wecom_id: str = ""
 
     # --- 观测 ---
     # 健康检查只服务两个内部消费者：容器自带的 Docker HEALTHCHECK，以及宿主机上

@@ -12,7 +12,7 @@ import logging
 import threading
 import time
 
-from . import discover, events, notify, state, trustlist
+from . import discover, events, notify_events, state, trustlist
 from .config import Config, Rule
 from .router import (AuthFailed, NetworkError, NotLoggedIn, RouterError,
                      SessionExpired)
@@ -78,6 +78,12 @@ class Syncer:
         # 上一轮观察到的防火墙总开关状态（None = 还没观察过）：用于把「开关
         # 在路由器端被人为改动」也记进修改日志。网页开关自己记，不靠这里。
         self._fw_seen = None
+        # 连续多少轮看到「总开关是关的」——连推 3 轮才发一次通知，防抖
+        self._fw_off_rounds = 0
+        # 静默期截止时间（手动重启 / 重拨后挂上，见 defer()）
+        self.quiet_until = 0.0
+        # 设备在线状态基线：None = 还没建过（首轮只建基线，一条通知都不发）
+        self._dev_state: dict | None = None
 
     def _log_event(self, action: str, trigger: str | None = None, **ev) -> None:
         """往修改日志追加一条（文件即数据，见 events.py）。失败不影响同步。"""
@@ -87,6 +93,18 @@ class Syncer:
                       self.cfg.events_max)
 
     # ---------------- 热重配（网页改完设置后调用） ----------------
+
+    def defer(self, seconds: float, reason: str = "") -> None:
+        """挂一段静默期：手动重启 / 重拨之后别马上去读路由器。
+
+        reboot 后登录态必然失效、路由器还在起，这时候同步循环去请求只会刷出
+        一串「连不上」的假失败，还可能触发「连不上路由器」的告警。
+        """
+        self.quiet_until = time.time() + max(0.0, float(seconds))
+        log.info("进入静默期 %.0f 秒%s", seconds, f"（{reason}）" if reason else "")
+
+    def in_quiet(self) -> bool:
+        return time.time() < getattr(self, "quiet_until", 0.0)
 
     def reconfigure(self, cfg: Config, router) -> None:
         """换成新的配置与路由器对象。
@@ -158,6 +176,45 @@ class Syncer:
             return False
 
     # ---------------- 目标地址发现（按规则绑定方式分流，无开关） ----------------
+
+    def _track_devices(self, hosts_by_mac: dict) -> None:
+        """比对设备上下线，推「设备已上线 / 已离线 / 发现新设备」。
+
+        **第一轮只建基线不推**：容器每次重启都重新拉一遍设备表，第一轮要是
+        当"从无到有"处理，就会把"所有设备同时上线"糊一脸。基线落在内存里，
+        重启即失效，正好符合这个语义。
+        """
+        cur: dict = {}
+        for mac, h in hosts_by_mac.items():
+            cur[mac] = (str(h.get("Active") or "").strip().lower()
+                        not in ("", "0", "false", "off", "no", "none"),
+                        discover.host_display_name(h))
+        if self._dev_state is None:
+            self._dev_state = cur
+            log.info("设备在线状态基线已建立：%d 台", len(cur))
+            return
+        came, went, fresh = [], [], []
+        for mac, (active, name) in cur.items():
+            old = self._dev_state.get(mac)
+            if old is None:
+                fresh.append(f"{name or mac}（{mac}）")
+            elif active and not old[0]:
+                came.append(name or mac)
+            elif not active and old[0]:
+                went.append(name or mac)
+        self._dev_state = cur
+        if came:
+            notify_events.dispatch(self.cfg, "dev_online",
+                                   "、".join(came) + " 重新连上了网络",
+                                   subject=came[0])
+        if went:
+            notify_events.dispatch(self.cfg, "dev_offline",
+                                   "、".join(went) + " 已离线",
+                                   subject=went[0])
+        if fresh:
+            notify_events.dispatch(self.cfg, "dev_new",
+                                   "陌生设备 " + "、".join(fresh) + " 接入了网络",
+                                   subject=fresh[0])
 
     def _host_map(self) -> dict:
         """把 HostInfo 按 MAC（规范化小写）建索引；一次请求供所有设备规则共用。"""
@@ -406,6 +463,11 @@ class Syncer:
     def _tick(self) -> dict:
         self.last_tick_at = time.strftime("%Y-%m-%d %H:%M:%S")
         self.tick_changes = []
+        if self.in_quiet():
+            # 手动操作后的静默期：当作「一切正常、只是先不碰路由器」，
+            # 不累计失败，也不动 last_error。
+            log.debug("静默期内，本轮跳过同步")
+            return self.snapshot(ok=self.last_ok)
         try:
             if not self.ensure_login():
                 self.last_ok = False
@@ -420,6 +482,8 @@ class Syncer:
             # IPv6 防火墙总开关（默认不动用户的配置）
             enabled = trustlist.is_enabled(self.router)
             self.firewall_on = enabled
+            if enabled:
+                self._fw_off_rounds = 0
             # 开关在路由器端被人为改动（不是网页、也不是自动打开）→ 记一条。
             # 首轮只记基准不记事件，避免每次重启都多一条无意义记录。
             if self._fw_seen is not None and enabled != self._fw_seen:
@@ -445,6 +509,13 @@ class Syncer:
                     # 开关重新打开后，下一轮自动恢复同步并把地址追平。
                     log.warning("IPv6 防火墙当前是关闭的 —— 本轮跳过同步"
                                 "（如需自动打开请设 ENSURE_FIREWALL_ON=true）")
+                    self._fw_off_rounds += 1
+                    if self._fw_off_rounds == 3:
+                        notify_events.dispatch(
+                            self.cfg, "fw_off",
+                            "IPv6 防火墙已关闭，白名单里的规则暂时都不生效。"
+                            "在「IPv6 防火墙」页重新打开开关就会自动恢复同步。",
+                            subject="fw")
                     self.consecutive_failures = 0
                     self.last_error = None
                     self.last_ok = True
@@ -453,6 +524,10 @@ class Syncer:
 
             # 设备表一次拉取、所有设备规则共用（每规则各拉一次太浪费）
             hosts_by_mac = self._host_map()
+            try:
+                self._track_devices(hosts_by_mac)
+            except Exception as e:  # noqa: BLE001
+                log.warning("设备上下线比对失败（不影响同步）：%s", e)
             for rule in self.cfg.rules:
                 try:
                     self.sync_rule(rule, hosts_by_mac)
@@ -475,16 +550,19 @@ class Syncer:
             self.consecutive_failures += 1
             self.last_error = str(e)
             log.error("会话失效：%s", e)
+            self._notify_failure(e, "login")
             return self.snapshot(ok=False)
         except (NetworkError, AuthFailed) as e:
             self.consecutive_failures += 1
             self.last_error = str(e)
             log.error("本轮同步失败：%s", e)
+            self._notify_failure(e, "login" if isinstance(e, AuthFailed) else "")
             return self.snapshot(ok=False)
         except RouterError as e:
             self.consecutive_failures += 1
             self.last_error = str(e)
             log.error("路由器错误：%s", e)
+            self._notify_failure(e)
             return self.snapshot(ok=False)
         except Exception as e:  # noqa: BLE001
             self.consecutive_failures += 1
@@ -500,13 +578,42 @@ class Syncer:
         changes = list(self.tick_changes)
         if not changes or self.cfg.dry_run:
             return
-        title = (self.cfg.notify_title or "IPv6 白名单已更新")
-        results = notify.send_all(self.cfg, title, "\n".join(changes))
-        for ch, ok, err in results:
-            if ok:
-                log.info("变更通知已发送（%s）：%d 项变更", ch, len(changes))
+        # 一条通知只用一个事件标题：以本轮最主要的动作定性
+        if any("已新增" in c for c in changes):
+            code = "fw_add"
+        elif any("已删除" in c for c in changes):
+            code = "fw_remove"
+        else:
+            code = "fw_update"
+        results = notify_events.dispatch(self.cfg, code, "\n".join(changes))
+        for r in results:
+            if r.get("ok"):
+                log.info("变更通知已发送（%s）：%d 项变更", r.get("name"),
+                         len(changes))
             else:
-                log.warning("变更通知发送失败（%s）：%s", ch, err)
+                log.warning("变更通知发送失败（%s）：%s", r.get("name"),
+                            r.get("error"))
+
+    def _notify_failure(self, exc: Exception, kind: str = "") -> None:
+        """连续失败够多才推一条 —— 偶发抖动不值得打扰。
+
+        文案里**不出现**接口路径 / 字段名 / 异常类名（界面上不暴露内部参数），
+        诊断细节留在容器日志里。
+        """
+        n = self.consecutive_failures
+        if n < 3:
+            return
+        host = getattr(self.cfg, "host", "路由器")
+        if kind == "login" or isinstance(exc, (AuthFailed, NotLoggedIn)):
+            code = "sys_login_fail"
+            text = (f"路由器拒绝了登录（连续 {n} 次）。"
+                    "请到「路由器设置」核对用户名和密码。")
+        else:
+            code = "sys_unreachable"
+            text = (f"连续 {n} 轮没连上 {host}。"
+                    "请确认路由器在线、地址没变，家里网络是否正常。")
+        log.info("推送失败事件：%s（连续 %d 次）", code, n)
+        notify_events.dispatch(self.cfg, code, text, subject="sync")
 
     @property
     def total_writes(self) -> int:
