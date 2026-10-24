@@ -166,6 +166,15 @@ a.lnk:hover .go{color:var(--accent-text)}
   .kv:nth-last-child(-n+4){border-bottom:0}
 }
 .kv:last-child,.kv:nth-last-child(2){border-bottom:0}
+/* 首页路由器信息卡：5 列 × 2 行（与防火墙页 4 列的 rc-grid 分开，边框各算各的） */
+.ri5{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));border-top:1px solid var(--line-1)}
+.ri5 .kv:nth-child(2n){border-right:0}
+@media(min-width:820px){
+  .ri5{grid-template-columns:repeat(5,minmax(0,1fr))}
+  .ri5 .kv:nth-child(2n){border-right:1px solid var(--line-1)}
+  .ri5 .kv:nth-child(5n){border-right:0}
+  .ri5 .kv:nth-last-child(-n+5){border-bottom:0}
+}
 .kv .k{font-size:11px;color:var(--text-5);white-space:nowrap}
 .kv .v{margin-top:3px;font-size:12.5px;font-weight:500;color:var(--text-1);
   overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
@@ -964,7 +973,7 @@ html[data-theme="light"] .tpick-mask{background:rgba(30,34,56,.34)}
             </div>
             <span class="badge badge-plain" id="riBadge"><span class="dot"></span>读取中</span>
           </div>
-          <div class="rc-grid" id="riGrid"></div>
+          <div class="ri5" id="riGrid"></div>
           <div class="rc-acts">
             <span class="rc-acts-t">快捷操作</span>
             <button class="btn btn-sm" data-op="reboot"><svg class="i"><use href="#i-refresh"/></svg>重启路由器</button>
@@ -1544,7 +1553,9 @@ function renderInfo() {
       + escHtml((info.harmony || info.firmware ? 'HarmonyOS ' : '') + fw) + '</span>'
     : '—';
   const cells = [
-    ['运行时长', escHtml(info.uptime || '—')],
+    ['LAN IPv4', info.lan_ip4
+      ? '<button class="cp" data-cp="' + escAttr(info.lan_ip4) + '">' + svgI('copy')
+        + '<span>' + escHtml(info.lan_ip4) + '</span></button>' : '—'],
     ['WAN IPv4', info.wan4
       ? '<button class="cp" data-cp="' + escAttr(info.wan4) + '">' + svgI('copy')
         + '<span>' + escHtml(info.wan4) + '</span></button>' : '—'],
@@ -1553,16 +1564,10 @@ function renderInfo() {
         + '<span>' + escHtml(info.wan6) + '</span></button>' : '—'],
     ['IPv6 前缀', escHtml(info.prefix6 || '—')],
     ['Wi-Fi 名称', ssidHtml],
-    ['LAN IPv4', info.lan_ip4
-      ? '<button class="cp" data-cp="' + escAttr(info.lan_ip4) + '">' + svgI('copy')
-        + '<span>' + escHtml(info.lan_ip4) + '</span></button>' : '—'],
+    ['运行时长', escHtml(info.uptime || '—')],
     ['固件版本', fwHtml],
-    ['上次同步', escHtml(ago(st.last_success_at))],
-    // 设备 / 白名单拆成四个格子，正好凑满 3 行 × 4 列，最后一行不再空两格
     ['在线设备', (S.info && S.info.hosts_total)
       ? escHtml(S.info.hosts_online + ' 台（共 ' + S.info.hosts_total + ' 台）') : '—'],
-    ['离线设备', (S.info && S.info.hosts_total)
-      ? escHtml(Math.max(0, S.info.hosts_total - S.info.hosts_online) + ' 台') : '—'],
     ['同步规则', (() => {
       const n = (S.wl && S.wl.ok) ? (S.wl.rules || []).length
         : ((S.state && S.state.overview && (S.state.overview.rules || []).length) || 0);
@@ -1573,13 +1578,7 @@ function renderInfo() {
         : st.firewall_ipv6_enabled === false
           ? ' <span class="badge badge-plain" style="font-weight:400;margin-left:2px"><span class="dot"></span>已关闭</span>'
           : '')],
-    ['路由器条目', (() => {
-      const ent = (S.wl && S.wl.ok && S.wl.entries) ? S.wl.entries.length : null;
-      const cap = (S.wl && S.wl.ok && S.wl.max) ? S.wl.max : null;
-      return ent != null
-        ? escHtml(String(ent)) + ' 条' + (cap ? ' <span class="sub" style="font-weight:400">（上限 ' + escHtml(String(cap)) + '）</span>' : '')
-        : '—';
-    })()],
+    ['上次同步', escHtml(ago(st.last_success_at))],
   ];
   grid.innerHTML = cells.map(([k, v]) =>
     '<div class="kv"><div class="k">' + k + '</div><div class="v mono">' + v + '</div></div>').join('');
@@ -3082,8 +3081,6 @@ async function boot() {
     loadNotify(),
     loadInfo(),
     loadHosts(),
-    // 信息卡上「路由器条目」一格要用白名单实读数据，登录后顺手拉一份
-    loadFirewall(),
   ]);
   renderSettings();
   renderAbout();
