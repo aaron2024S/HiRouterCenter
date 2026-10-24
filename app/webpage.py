@@ -1556,27 +1556,30 @@ function renderInfo() {
     ['LAN IPv4', info.lan_ip4
       ? '<button class="cp" data-cp="' + escAttr(info.lan_ip4) + '">' + svgI('copy')
         + '<span>' + escHtml(info.lan_ip4) + '</span></button>' : '—'],
+    ['固件版本', fwHtml],
+    ['上次同步', escHtml(ago(st.last_success_at))],
+    // 设备 / 白名单拆成四个格子，正好凑满 3 行 × 4 列，最后一行不再空两格
     ['在线设备', (S.info && S.info.hosts_total)
-      ? escHtml(S.info.hosts_online + ' 台在线 · '
-        + Math.max(0, S.info.hosts_total - S.info.hosts_online) + ' 台离线'
-        + '，共 ' + S.info.hosts_total + ' 台') : '—'],
-    ['IPv6 白名单', (() => {
+      ? escHtml(S.info.hosts_online + ' 台（共 ' + S.info.hosts_total + ' 台）') : '—'],
+    ['离线设备', (S.info && S.info.hosts_total)
+      ? escHtml(Math.max(0, S.info.hosts_total - S.info.hosts_online) + ' 台') : '—'],
+    ['同步规则', (() => {
       const n = (S.wl && S.wl.ok) ? (S.wl.rules || []).length
         : ((S.state && S.state.overview && (S.state.overview.rules || []).length) || 0);
-      const ent = (S.wl && S.wl.ok && S.wl.entries) ? S.wl.entries.length : null;
-      const main = n || (S.wl && S.wl.ok)
-        ? '同步规则 ' + escHtml(String(n)) + ' 条'
-          + (ent != null ? ' · 路由器上 ' + escHtml(String(ent)) + ' 条' : '')
-        : '—';
-      return main;
+      return (n || (S.wl && S.wl.ok)) ? escHtml(String(n)) + ' 条' : '—';
     })()
       + (st.firewall_ipv6_enabled === true
         ? ' <span class="badge badge-run" style="font-weight:400;margin-left:2px"><span class="dot"></span>已开启</span>'
         : st.firewall_ipv6_enabled === false
           ? ' <span class="badge badge-plain" style="font-weight:400;margin-left:2px"><span class="dot"></span>已关闭</span>'
           : '')],
-    ['上次同步', escHtml(ago(st.last_success_at))],
-    ['固件版本', fwHtml],
+    ['路由器条目', (() => {
+      const ent = (S.wl && S.wl.ok && S.wl.entries) ? S.wl.entries.length : null;
+      const cap = (S.wl && S.wl.ok && S.wl.max) ? S.wl.max : null;
+      return ent != null
+        ? escHtml(String(ent)) + ' 条' + (cap ? ' <span class="sub" style="font-weight:400">（上限 ' + escHtml(String(cap)) + '）</span>' : '')
+        : '—';
+    })()],
   ];
   grid.innerHTML = cells.map(([k, v]) =>
     '<div class="kv"><div class="k">' + k + '</div><div class="v mono">' + v + '</div></div>').join('');
@@ -3079,6 +3082,8 @@ async function boot() {
     loadNotify(),
     loadInfo(),
     loadHosts(),
+    // 信息卡上「路由器条目」一格要用白名单实读数据，登录后顺手拉一份
+    loadFirewall(),
   ]);
   renderSettings();
   renderAbout();
