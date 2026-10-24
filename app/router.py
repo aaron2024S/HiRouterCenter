@@ -53,6 +53,9 @@ API = {
     "wan": "ntwk/wan",
     "wlanradio": "ntwk/wlanradio",
     "channelinfo": "ntwk/channelinfo",
+    # 真机抓包确认：这台固件（MEDUSA2-BR80）的 SSID / 频段 / 信道不在 ntwk/wlan 里，
+    # 而在 WlanGuideBasic 的 WifiConfig[] 中（注意大小写，路径写错就是 404）
+    "wlanbasic": "ntwk/WlanGuideBasic",
     "reboot": "service/reboot.cgi",
 }
 

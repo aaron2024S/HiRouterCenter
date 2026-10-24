@@ -8,17 +8,23 @@
     在这台固件上直接返回 "-"，所以固件版本要按「不是 - 才显示」来判。
   · `ntwk/wan` / `ntwk/ipv6_wan` 等 —— 需登录。
 
-为什么 WAN IPv6 不能「按形状捞第一个全球单播」：`ipv6_wan` 返回体里
+为什么 WAN IPv6 不能「按形状捞第一个全球单播」：`ntwk/wan` 返回体里
 **DNS 服务器（240e:5a::6666）和前缀（240e:xxx::/64）也是全球单播**，
 捞到哪个全看字段顺序 —— 表现就是「一会正常一会变成 DNS/前缀」。
-所以 v6 取地址必须两段式：
+（真机事故：键名模糊匹配把 `IPv6DnsServers` 当成了地址，界面上 WAN IPv6
+直接显示成 DNS 服务器。）所以 v6 取地址必须**先认死键名**，再谈兜底：
 
-  1. **键名优先**：键名里同时出现「wan/ip/v6 语义」，值是完整地址才认；
-  2. **形状兜底**：只认**不含 `::` 的完整 8 段地址** —— WAN 口地址永远是
-     完整形式，而前缀（…::/64）和 DNS（…::6666）几乎都是压缩形式。
+  1. **确定键名**：`IPv6AddrSet` / `IPv6Addr`（带 `/64` 后缀，要剥掉），
+     真机实测就是这两个；前缀是 `IPv6PrefixList`，DNS 是 `IPv6DnsServers`；
+  2. **模糊键名**：键名带 v6 语义，但**排除 dns / prefix / gateway**；
+  3. **形状兜底**：只认**不含 `::` 的完整地址** —— WAN 口地址一般是完整
+     形式，而前缀（…::/64）和 DNS（…::6666）几乎都是压缩形式。
 
-Wi-Fi 同理：不再深度扫任意字符串（会把设备名、时间串捞进来），只认
-**键名带 ssid** 的值；信道只认键名带 channel（排除 deploy/mode）的整数，
+Wi-Fi 同理。真机实测这台固件（Q7 网线版）的 SSID **不在 `ntwk/wlan` 里**，
+在 `ntwk/WlanGuideBasic` 的 `WifiConfig[]` 中，每项自带
+`WifiSsid` + `FrequencyBand`(2.4GHz/5GHz) + `Channel` —— 有结构化数据就
+直接读它（频段和信道一并拿到，不用靠取值范围猜），读不到才回退到泛扫：
+只认**键名带 ssid** 的值；信道只认键名带 channel（排除 deploy/mode）的整数，
 再按数值范围归频段（1-14 → 2.4G，36-196 → 5G），不赌字段名。
 """
 from __future__ import annotations
@@ -36,9 +42,26 @@ _MODEL_KEYS = ("NetECCode", "DeviceModel", "Model", "HardwareVersion")
 _MAC_RE = re.compile(r"^([0-9a-f]{2}[:-]){5}[0-9a-f]{2}$", re.I)
 
 # Wi-Fi / 信道探测的接口清单。不同固件暴露的字段不一样，多试几个；
+# wlanbasic（ntwk/WlanGuideBasic）是 Q7 网线版实测唯一的 SSID 来源，放第一个。
 # channelinfo / wlanradio 即便没有 SSID，也可能带当前信道。
-_WIFI_PATHS = ("wlan", "wlanhost", "wlanadv", "hostssid",
+_WIFI_PATHS = ("wlanbasic", "wlan", "wlanhost", "wlanadv", "hostssid",
                "channelinfo", "wlanradio")
+
+# WAN IPv6 的确定键名（小写精确匹配，按可信度排）。真机 ntwk/wan 实测：
+#   IPv6AddrSet = 纯地址；IPv6Addr = 地址/前缀长度；
+#   IPv6PrefixList = 运营商下发的前缀；IPv6DnsServers = DNS（绝不能当地址）
+_V6_ADDR_KEYS = ("ipv6addrset", "ipv6addr", "ipv6address",
+                 "wanipv6addr", "ipv6wanaddr", "ipv6ipaddr")
+_V6_PREFIX_KEYS = ("ipv6prefixlist", "ipv6prefix", "ipv6pdprefix", "prefixlist")
+# 模糊匹配时一律跳开的词：这些键的值也可能是全球单播地址
+_V6_SKIP = ("dns", "prefix", "gateway", "gw", "server", "dhcp", "radvd")
+# v4 同理：`IPv4Gateway`（58.208.16.193）排在 `IPv4Addr`（58.208.16.212）前面，
+# 泛扫会把网关当成 WAN 地址 —— 所以 v4 也要走确定键名 + 排除 gateway / mask / dns
+_V4_ADDR_KEYS = ("ipv4addr", "ipv4address", "externalipaddress",
+                 "wanipv4addr", "ipv4wanaddr", "ipaddr")
+_V4_SKIP = ("dns", "gateway", "gw", "mask", "netmask", "server", "dhcp", "static")
+
+_BAND_RE = re.compile(r"radio\.(\d+)", re.I)
 
 
 # --------------------------------------------------------------------------
@@ -130,18 +153,39 @@ def _global_ipv6(text: str) -> bool:
     return int(a) >> 125 == 0b001
 
 
-def _pick_addr(body, kind: str) -> str:
-    """从响应体里挑「WAN 地址」。键名优先，形状兜底；见模块头注释。"""
+def _exact(body, keys) -> str:
+    """按「小写键名精确等于」取值，第一个合法的字符串值。"""
     if not isinstance(body, (dict, list)):
         return ""
+    for k, v in _walk(body):
+        if str(k).lower() in keys and isinstance(v, str):
+            return v.strip()
+    return ""
+
+
+def _pick_addr(body, kind: str) -> str:
+    """从响应体里挑「WAN 地址」。确定键名 → 模糊键名 → 形状兜底；见模块头注释。"""
+    if not isinstance(body, (dict, list)):
+        return ""
+
+    if kind == "v6":
+        raw = _exact(body, _V6_ADDR_KEYS)
+        if _global_ipv6(raw.split("/")[0].strip()):
+            return raw.split("/")[0].strip()
+    else:
+        raw = _exact(body, _V4_ADDR_KEYS)
+        if _public_ipv4(raw.split("/")[0].strip()):
+            return raw.split("/")[0].strip()
 
     def by_key(k: str, v):
         if kind == "v6":
             if ("ipv6" in k or "v6" in k) and ("ip" in k or "addr" in k) \
+                    and not any(s in k for s in _V6_SKIP) \
                     and isinstance(v, str) and _global_ipv6(v.split("/")[0].strip()):
                 return True
         else:
-            if "ipv6" not in k and "v6" not in k and "dns" not in k \
+            if "ipv6" not in k and "v6" not in k \
+                    and not any(s in k for s in _V4_SKIP) \
                     and ("ip" in k or "addr" in k) and isinstance(v, str) \
                     and _public_ipv4(v.split("/")[0].strip()):
                 return True
@@ -157,6 +201,31 @@ def _pick_addr(body, kind: str) -> str:
             return core
         if kind == "v6" and _global_ipv6(core) and "::" not in core:
             return core
+    return ""
+
+
+def _pick_prefix(body) -> str:
+    """IPv6 前缀（运营商下发的那段，形如 240e:xxx:xxxx:xxxx::/64）。
+
+    确定键名优先；泛扫只认「压缩写法（`::`）+ 合法网络 + 前缀 ≤ 64」，
+    避免把 WAN 口地址（240e:…:edc7/64，不含 `::`）误当成前缀。
+    """
+    if not isinstance(body, (dict, list)):
+        return ""
+    raw = _exact(body, _V6_PREFIX_KEYS)
+    if raw and ":" in raw:
+        return raw.split(",")[0].strip()
+    for s in _scan_strings(body):
+        core = s.split(",")[0].strip()
+        if "::" not in core:
+            continue
+        try:
+            net = ipaddress.IPv6Network(core, strict=False)
+        except (ValueError, TypeError):
+            continue
+        if net.prefixlen <= 64 and not (net.is_private or net.is_link_local
+                                        or net.is_loopback):
+            return str(net)
     return ""
 
 
@@ -237,10 +306,64 @@ def _deviceinfo(router) -> dict:
     return info if isinstance(info, dict) else {}
 
 
+def _band_of(*vals) -> str:
+    """从 FrequencyBand / ID 之类的值里判频段；判不出来返回空串。"""
+    for v in vals:
+        t = str(v or "").lower().replace(" ", "").replace("_", "")
+        if not t:
+            continue
+        if "2.4" in t or t.startswith("2g") or "24g" in t:
+            return "2.4G"
+        if "5g" in t or "5ghz" in t or "6g" in t or "6ghz" in t:
+            return "5G" if "5" in t else "6G"
+        m = _BAND_RE.search(t)
+        if m:
+            return "2.4G" if m.group(1) == "1" else "5G"
+    return ""
+
+
+def _wifi_struct(body, names: dict, chans: dict) -> bool:
+    """`ntwk/WlanGuideBasic` 的 `WifiConfig[]`：SSID / 频段 / 信道一次拿全。
+
+    真机结构：
+        {"WifiConfig": [{"WifiSsid": "HOME", "FrequencyBand": "2.4GHz",
+                         "Channel": 1, "ID": "...Wifi.Radio.1.Ssid.1."}, …]}
+    返回 True 表示拿到了结构化 SSID，调用方不必再泛扫这个响应体。
+    """
+    items = body.get("WifiConfig") if isinstance(body, dict) else None
+    if not isinstance(items, list) or not items:
+        return False
+    got = False
+    for it in items:
+        if not isinstance(it, dict):
+            continue
+        band = _band_of(it.get("FrequencyBand"), it.get("ID"))
+        ssid = it.get("WifiSsid") or it.get("WifiSsidFactory") or it.get("Ssid")
+        if isinstance(ssid, str) and ssid.strip():
+            s = ssid.strip()
+            if not 1 <= len(s) <= 32 or "." in s or ":" in s:
+                continue                        # 太长 / 像 IP，不是 SSID
+            names[band].append(s)
+            got = True
+        ch = it.get("Channel")
+        if _is_num(ch) and band:
+            n = int(ch)
+            if 1 <= n <= 196:
+                chans.setdefault(band, n)
+        elif _is_num(ch):
+            n = int(ch)
+            if 1 <= n <= 14:
+                chans.setdefault("2.4G", n)
+            elif 36 <= n <= 196:
+                chans.setdefault("5G", n)
+    return got
+
+
 def _wifi(router) -> tuple[dict, dict]:
     """返回 (SSID 按频段, 信道按频段)。
 
-    SSID 只认键名带 ssid 的字符串，键名能分出 2.4G / 5G 就分；分不出来、
+    优先读 `WlanGuideBasic` 的结构化 `WifiConfig[]`；没有的固件才回退泛扫：
+    只认键名带 ssid 的字符串，键名能分出 2.4G / 5G 就分；分不出来、
     或两个频段同名（**双频合一**，2.4G 和 5G 共用一个名称）就合并成一个键。
     信道按数值归频段：1-14 → 2.4G，36-196 → 5G；ChannelDeploy /
     NetChannelMode 这类「含 channel 但不是信道号」的键明确排除。
@@ -250,6 +373,8 @@ def _wifi(router) -> tuple[dict, dict]:
     for path in _WIFI_PATHS:
         body = _safe_get(router, path)
         if not isinstance(body, (dict, list)):
+            continue
+        if _wifi_struct(body, names, chans):
             continue
         for k, v in _walk(body):
             ks = str(k).lower()
@@ -341,27 +466,33 @@ def collect(router) -> dict:
         except (TypeError, ValueError):
             pass
 
-    # WAN 地址要登录；读不到就让那两格空着
+    # WAN 地址要登录；读不到就让那两格空着。
+    # 真机实测：v4 / v6 地址、下发前缀、DNS 全都在这一个 ntwk/wan 里，
+    # 所以先读它（ipv6_wan 只在部分固件上存在，仅作补充）
     wan_body = _safe_get(router, "wan")
     if wan_body is not None:
         out["wan4"] = _pick_addr(wan_body, "v4")
+        out["wan6"] = _pick_addr(wan_body, "v6")
+        out["prefix6"] = _pick_prefix(wan_body)
         if not out["wan_mac"]:
             out["wan_mac"] = _pick_mac(wan_body, "wan")
     v6_body = _safe_get(router, "ipv6_wan")
     if v6_body is not None:
-        out["wan6"] = _pick_addr(v6_body, "v6")
-        if not out["prefix6"]:
-            p = _pick_string(v6_body, "prefix")
-            out["prefix6"] = p if ":" in p else ""
+        out["wan6"] = out["wan6"] or _pick_addr(v6_body, "v6")
+        out["prefix6"] = out["prefix6"] or _pick_prefix(v6_body)
     lan6 = _safe_get(router, "ipv6_lan")
     if lan6 is not None:
-        p = _pick_string(lan6, "prefix")
-        if ":" in p:
-            out["prefix6"] = out["prefix6"] or p
+        out["prefix6"] = out["prefix6"] or _pick_prefix(lan6)
     if not out["lan_ip4"]:
         out["lan_ip4"] = _pick_lan_ip4(lan6 or {}) or _pick_lan_ip4(info)
     if not out["lan_ip4"]:
         out["lan_ip4"] = _pick_lan_ip4(_safe_get(router, "lan_host") or {})
+    if not out["lan_ip4"]:
+        # 兜底：管理地址本身就是路由器的 LAN 地址（192.168.3.1 这种）
+        base = str(getattr(router, "base", "") or "")
+        host = base.split("://")[-1].split("/")[0].split(":")[0]
+        if _lan_ipv4(host):
+            out["lan_ip4"] = host
     if not out["lan_mac"]:
         out["lan_mac"] = _pick_mac(lan6 or {}, "lan")
 

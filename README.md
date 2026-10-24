@@ -406,7 +406,7 @@ RULES=[{"name":"NAS","port":16669,"mac":"00:11:22:AA:BB:CC"},
 
 ```
 ipv6sync/offline/dist/
-├── ipv6sync-1.2.1-amd64-image.tar     51.4 MB   x86_64 NAS（唯一产物）
+├── ipv6sync-1.2.2-amd64-image.tar     51.4 MB   x86_64 NAS（唯一产物）
 ├── docker-compose.offline.yml          无 build 段的 compose
 ├── .env.example                        环境变量模板
 ├── SHA256SUMS.txt                      tar 的 sha256
@@ -417,7 +417,7 @@ NAS 上只需要四步：
 
 ```bash
 uname -m                                    # 应该是 x86_64
-docker load -i ipv6sync-1.2.1-amd64-image.tar
+docker load -i ipv6sync-1.2.2-amd64-image.tar
 mkdir -p data && sudo chown -R 10001:10001 data
 docker compose -f docker-compose.offline.yml up -d   # 先在 yaml 的 environment 里改 ADMIN_PASSWORD
 ```
@@ -592,6 +592,24 @@ python -m unittest discover -s tests -t . -v
   设备卡上的「放行」按钮去掉，放行只在防火墙页按设备管理。
 - **计划任务**新增「定时唤醒」：设备从列表里选（最多 20 台），到点逐台间隔发 WOL。
 - 单测 **304 项**。
+
+### 1.2.2
+信息卡取数按真机抓包重写（这次是照着路由器真实返回体修的，不再猜字段名）：
+
+- **WAN IPv4 显示成网关**：`IPv4Gateway` 排在 `IPv4Addr` 前面，泛扫先捞到网关。
+  现在按确定键名取 `IPv4Addr`，`gateway / mask / dns` 一律排除。
+- **WAN IPv6 显示成 DNS 服务器**（240e:5a::6666）：同类问题，现在按确定键名取
+  `IPv6AddrSet / IPv6Addr`，`IPv6DnsServers / IPv6Gateway` 排除。
+- **IPv6 前缀是空的**：原来按「键名带 prefix」没取到，这台固件的下发前缀在
+  `IPv6PrefixList` 里，已按真名读取。
+- **Wi-Fi 名称不显示**：这台固件的 SSID 不在 `ntwk/wlan`，在 `ntwk/WlanGuideBasic`
+  的 `WifiConfig[]`（每项自带频段与信道），结构化读取，双频合一与 2.4G/5G 信道
+  直接拿全，不再靠取值范围猜。
+- **LAN IPv4** 读不到时用管理地址兜底。
+- **设备类型补全**（+10 类：浴霸 / 热水器 / 净水·饮水机 / 风扇 / 空气净化器 /
+  窗帘·晾衣机 / 体重秤 / VR 眼镜 / 电饭煲 / 取暖器·电热毯，共 35 类），
+  手机图标重画；信息卡「在线设备 / IPv6 白名单」两格信息量补足。
+- 单测 **326 项**。
 
 ### 1.2.1
 改版时漏掉的功能与信息卡取数的修正，逐条补回：
