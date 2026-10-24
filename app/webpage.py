@@ -701,10 +701,10 @@ html[data-theme="light"] .tpick-mask{background:rgba(30,34,56,.34)}
   <path class="f" d="M6.6 6.4h10.8v7H6.6Z"/>
 </symbol>
 <symbol id="t-phone" viewBox="0 0 24 24">
-  <rect x="7.2" y="2.4" width="9.6" height="19.2" rx="2.6"/>
-  <path d="M10.4 5.2h3.2"/>
-  <circle cx="12" cy="18.6" r=".95" class="f"/>
-  <path class="f" d="M9 7.4h6v8.4H9Z" opacity=".7"/>
+  <rect x="6.6" y="2.2" width="10.8" height="19.6" rx="2.8"/>
+  <path class="f" d="M8.4 4.8h7.2v13.8H8.4Z" opacity=".8"/>
+  <path d="M10.3 3.4h3.4"/>
+  <path d="M10.9 19h2.2"/>
 </symbol>
 <symbol id="t-tablet" viewBox="0 0 24 24">
   <rect x="4.4" y="2.8" width="15.2" height="18.4" rx="2.6"/>
@@ -828,6 +828,65 @@ html[data-theme="light"] .tpick-mask{background:rgba(30,34,56,.34)}
 <symbol id="i-auto" viewBox="0 0 24 24">
   <circle cx="12" cy="12" r="9"/>
   <path class="f" d="M12 3a9 9 0 0 1 0 18Z"/>
+</symbol>
+
+<symbol id="t-bath" viewBox="0 0 24 24">
+  <rect x="3.6" y="3.4" width="16.8" height="5.2" rx="2"/>
+  <path class="f" d="M5.6 5.2h12.8v1.6H5.6Z" opacity=".55"/>
+  <path d="M7.2 12.2c0 1.5.8 2.2.8 3.4M12 12.2c0 1.5.8 2.2.8 3.4M16.8 12.2c0 1.5.8 2.2.8 3.4"/>
+  <path d="M7.2 18.2c0 1.2.7 1.8.7 2.8M12 18.2c0 1.2.7 1.8.7 2.8M16.8 18.2c0 1.2.7 1.8.7 2.8"/>
+</symbol>
+<symbol id="t-waterheater" viewBox="0 0 24 24">
+  <rect x="5.4" y="2.6" width="13.2" height="14.6" rx="3"/>
+  <path class="f" d="M7.4 4.6h9.2v4.6H7.4Z" opacity=".5"/>
+  <path d="M5.4 9.4h13.2"/>
+  <path d="M10.2 17.4c0 1.4.9 2 .9 3.2M13.8 17.4c0 1.4.9 2 .9 3.2"/>
+</symbol>
+<symbol id="t-purifier" viewBox="0 0 24 24">
+  <path d="M12 2.8c2.6 3 5.4 6.2 5.4 9.2a5.4 5.4 0 0 1-10.8 0c0-3 2.8-6.2 5.4-9.2Z"/>
+  <path class="f" d="M12 7.2c1.4 1.8 2.8 3.6 2.8 5.2a2.8 2.8 0 0 1-5.6 0c0-1.6 1.4-3.4 2.8-5.2Z" opacity=".55"/>
+</symbol>
+<symbol id="t-fan" viewBox="0 0 24 24">
+  <circle cx="12" cy="10.8" r="7.4"/>
+  <circle cx="12" cy="10.8" r="1.8" class="f"/>
+  <path class="f" d="M12 9c-.7-2.3.1-4.3 1.2-4.9.9 1 .9 3.4-1.2 4.9Z"/>
+  <path class="f" d="M13.5 11.7c2.4-.4 4.2.8 4.6 2-1.3.7-3.6.3-4.6-2Z"/>
+  <path class="f" d="M10.5 11.7c-2.4-.4-4.2.8-4.6 2 1.3.7 3.6.3 4.6-2Z"/>
+  <path d="M12 18.2v3.2M8.8 21.4h6.4"/>
+</symbol>
+<symbol id="t-airpur" viewBox="0 0 24 24">
+  <rect x="5.6" y="4.4" width="12.8" height="16.4" rx="2.4"/>
+  <path class="f" d="M7.6 6.4h8.8v4.6H7.6Z" opacity=".55"/>
+  <path d="M7.6 14h8.8M7.6 16.6h8.8M7.6 19h8.8" opacity=".9"/>
+  <path d="M9.2 2.4c0 .9.6 1.3.6 2.1M12 2c0 .9.6 1.3.6 2.1M14.8 2.4c0 .9.6 1.3.6 2.1" opacity=".7"/>
+</symbol>
+<symbol id="t-curtain" viewBox="0 0 24 24">
+  <path d="M3.4 3.2h17.2"/>
+  <path class="f" d="M5.2 3.2c-1.4 3.4-2 7-2 8.8 0 2.6.8 5.4 2.4 8.2h3.6c-1.8-2.8-2.6-5.6-2.6-8.2 0-2 .5-5.6 2-8.8Z" opacity=".6"/>
+  <path class="f" d="M18.8 3.2c1.4 3.4 2 7 2 8.8 0 2.6-.8 5.4-2.4 8.2h-3.6c1.8-2.8 2.6-5.6 2.6-8.2 0-2-.5-5.6-2-8.8Z" opacity=".6"/>
+</symbol>
+<symbol id="t-scale" viewBox="0 0 24 24">
+  <rect x="3.6" y="4.6" width="16.8" height="15.6" rx="2.6"/>
+  <path d="M7.4 8.4a6.6 6.6 0 0 1 9.2 0"/>
+  <path d="M12 8.8l2.5 2.3"/>
+  <circle cx="12" cy="8.8" r="1" class="f"/>
+</symbol>
+<symbol id="t-vr" viewBox="0 0 24 24">
+  <rect x="2.8" y="7.6" width="18.4" height="9.2" rx="3.2"/>
+  <circle cx="8.9" cy="12.2" r="2.3" class="f"/>
+  <circle cx="15.1" cy="12.2" r="2.3" class="f"/>
+  <path d="M11.2 12.2h1.6"/>
+</symbol>
+<symbol id="t-ricecooker" viewBox="0 0 24 24">
+  <path d="M4.6 9.8h14.8v6.6a4 4 0 0 1-4 4H8.6a4 4 0 0 1-4-4Z"/>
+  <path d="M3.4 9.8h17.2"/>
+  <path class="f" d="M6.6 11.8h10.8v4.4H6.6Z" opacity=".45"/>
+  <path d="M9 6.4h6M12 6.4v3.4"/>
+</symbol>
+<symbol id="t-heater" viewBox="0 0 24 24">
+  <rect x="4.6" y="3.6" width="14.8" height="13.2" rx="2.2"/>
+  <path d="M8.2 6.4v7.6M12 6.4v7.6M15.8 6.4v7.6" opacity=".85"/>
+  <path d="M7.4 19.6c0 1 .6 1.5.6 2.4M12 19.6c0 1 .6 1.5.6 2.4M16.6 19.6c0 1 .6 1.5.6 2.4"/>
 </symbol>
 </defs></svg>
 
@@ -1402,6 +1461,10 @@ const TYPES = [
   ['router', '路由器 / AP'], ['console', '游戏机'], ['fridge', '冰箱'], ['washer', '洗衣机'],
   ['ac', '空调'], ['vacuum', '扫地机'], ['light', '灯'], ['plug', '插座 / 开关'],
   ['lock', '门锁'], ['cooker', '厨房电器'], ['car', '车机'], ['iot', '传感器 / 网关'],
+  ['bath', '浴霸'], ['waterheater', '热水器'], ['purifier', '净水 / 饮水机'],
+  ['fan', '风扇'], ['airpur', '空气净化器'], ['curtain', '窗帘 / 晾衣机'],
+  ['scale', '体重秤'], ['vr', 'VR 眼镜'], ['ricecooker', '电饭煲'],
+  ['heater', '取暖器 / 电热毯'],
   ['unknown', '未知设备'],
 ];
 const TYPE_NAME = Object.fromEntries(TYPES);
@@ -1490,11 +1553,17 @@ function renderInfo() {
       ? '<button class="cp" data-cp="' + escAttr(info.lan_ip4) + '">' + svgI('copy')
         + '<span>' + escHtml(info.lan_ip4) + '</span></button>' : '—'],
     ['在线设备', (S.info && S.info.hosts_total)
-      ? escHtml(S.info.hosts_online + ' / ' + S.info.hosts_total + ' 台') : '—'],
+      ? escHtml(S.info.hosts_online + ' 台在线 · '
+        + Math.max(0, S.info.hosts_total - S.info.hosts_online) + ' 台离线'
+        + '，共 ' + S.info.hosts_total + ' 台') : '—'],
     ['IPv6 白名单', (() => {
       const n = (S.wl && S.wl.ok) ? (S.wl.rules || []).length
         : ((S.state && S.state.overview && (S.state.overview.rules || []).length) || 0);
-      return n || (S.wl && S.wl.ok) ? escHtml(n + ' 条') : '—';
+      const ent = (S.wl && S.wl.ok && S.wl.entries) ? S.wl.entries.length : null;
+      const main = n || (S.wl && S.wl.ok)
+        ? escHtml(n + ' 条规则') + (ent != null ? ' · 路由器上 ' + escHtml(ent) + ' 个条目' : '')
+        : '—';
+      return main;
     })()
       + (st.firewall_ipv6_enabled === true
         ? ' <span class="badge badge-run" style="font-weight:400;margin-left:2px"><span class="dot"></span>已开启</span>'
