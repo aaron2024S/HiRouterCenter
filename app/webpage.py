@@ -270,7 +270,8 @@ a.lnk:hover .go{color:var(--accent-text)}
 .chips{display:flex;flex-wrap:wrap;gap:6px}
 .devgrid{display:grid;grid-template-columns:1fr;gap:12px}
 @media(min-width:760px){.devgrid{grid-template-columns:repeat(2,minmax(0,1fr))}}
-@media(min-width:1180px){.devgrid{grid-template-columns:repeat(3,minmax(0,1fr))}}
+@media(min-width:900px){.devgrid{grid-template-columns:repeat(3,minmax(0,1fr))}}
+@media(min-width:1180px){.devgrid{grid-template-columns:repeat(5,minmax(0,1fr))}}
 .dev{display:flex;flex-direction:column;gap:10px;border:1px solid var(--line-1);
   border-radius:14px;background:var(--ink-700);padding:12px;transition:border-color .15s}
 .dev:hover{border-color:var(--line-4)}
@@ -965,6 +966,23 @@ html[data-theme="light"] .tpick-mask{background:rgba(30,34,56,.34)}
         </div>
 
         <div class="card">
+          <div class="ch"><svg class="i"><use href="#i-link"/></svg><span>路由器白名单条目</span>
+            <span class="hint" id="entHint"></span></div>
+          <div class="tblwrap">
+            <table class="tbl tbl-fixed">
+              <thead><tr>
+                <th style="width:180px">条目名称</th>
+                <th>本机 / 地址</th>
+                <th style="width:90px">端口</th>
+                <th style="width:140px">允许来源</th>
+                <th style="width:80px"></th>
+              </tr></thead>
+              <tbody id="entRows"></tbody>
+            </table>
+          </div>
+        </div>
+
+        <div class="card">
           <div class="ch"><svg class="i"><use href="#i-history"/></svg><span>同步记录</span>
             <span class="hint">只在真正改动白名单时记一条</span></div>
           <div class="cb" style="padding-bottom:0">
@@ -994,23 +1012,6 @@ html[data-theme="light"] .tpick-mask{background:rgba(30,34,56,.34)}
                 <th>变化</th>
               </tr></thead>
               <tbody id="evRows"></tbody>
-            </table>
-          </div>
-        </div>
-
-        <div class="card">
-          <div class="ch"><svg class="i"><use href="#i-link"/></svg><span>路由器上的白名单条目</span>
-            <span class="hint" id="entHint"></span></div>
-          <div class="tblwrap">
-            <table class="tbl tbl-fixed">
-              <thead><tr>
-                <th style="width:180px">条目名称</th>
-                <th>本机 / 地址</th>
-                <th style="width:90px">端口</th>
-                <th style="width:140px">允许来源</th>
-                <th style="width:80px"></th>
-              </tr></thead>
-              <tbody id="entRows"></tbody>
             </table>
           </div>
         </div>
@@ -1791,21 +1792,30 @@ function renderFirewall() {
   const hosts = wl.hosts || [];
   const byMac = {};
   hosts.forEach(h => { byMac[String(h.mac || '').toUpperCase()] = h; });
+  // 规则是否已在路由器上生效：与后端 trustlist.managed_pattern 一致，
+  // 基础名、基础名@N、各自可再带 -端口。**按实读条目判**，不按设备在线 ——
+  // 设备离线时条目仍保留在路由器上，照样是生效的；不绑定设备的规则（如 NAS）更没有「离线」一说。
+  const escRe = s => String(s).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const onRouter = name => (wl.entries || []).some(e =>
+    !!name && new RegExp('^' + escRe(name) + '(@\\d+)?(-\\d+)?$').test(String(e.Name || '')));
   const tb = $('#ruleRows');
   tb.innerHTML = '';
   (wl.rules || []).forEach(r => {
     const h = byMac[String(r.mac || '').toUpperCase()];
     const tr = document.createElement('tr');
-    const live = h && h.active && (h.ipv6 || []).length;
+    const synced = onRouter(r.name);
+    const devOff = !synced && r.mac && h && !h.active;
     tr.innerHTML = '<td><b style="font-weight:600">' + escHtml(r.name) + '</b></td>'
       + '<td>' + (h ? escHtml(h.name) + '<div class="mono" style="font-size:11px;color:var(--text-5)">'
         + escHtml(r.mac) + '</div>' : '<span class="sub">（不绑定设备）</span>') + '</td>'
       + '<td>' + escHtml(String(r.port)) + '</td>'
       + '<td class="mono">' + escHtml(r.remote_ip) + '</td>'
       + '<td><span class="badge badge-accent">自动维护</span></td>'
-      + '<td>' + (live
+      + '<td>' + (synced
         ? '<span class="badge badge-run"><span class="dot"></span>生效中</span>'
-        : '<span class="badge badge-warn">设备离线 · 保留</span>') + '</td>'
+        : devOff
+          ? '<span class="badge badge-warn">设备离线 · 待同步</span>'
+          : '<span class="badge badge-plain">待同步</span>') + '</td>'
       + '<td><div class="acts"><button class="btn btn-sm" data-a="edit">' + svgI('edit') + '编辑</button>'
       + '<button class="btn btn-sm btn-danger" data-a="del">' + svgI('trash') + '</button></div></td>';
     tr.querySelector('[data-a="edit"]').addEventListener('click', () => ruleDialog(r));
