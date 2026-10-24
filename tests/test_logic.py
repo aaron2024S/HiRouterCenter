@@ -1307,7 +1307,7 @@ class TestTaskTime(unittest.TestCase):
         self.assertEqual(
             tk.describe({"at": "22:00", "days": [1, 2, 3, 4, 5, 6, 7],
                          "kind": "wifi_power", "params": {"power_mode": 0}}),
-            "每天 22:00 → 睡眠")
+            "每天 22:00 → 睡眠模式")
 
 
 class TestTaskModel(unittest.TestCase):
@@ -1453,6 +1453,25 @@ class TestTaskApply(unittest.TestCase):
         self.assertEqual(tk.find_wan_id({"x": [{"y": {"id": "InternetConnection_7"}}]}),
                          "InternetConnection_7")
         self.assertEqual(tk.find_wan_id({"nothing": 1}), "")
+
+    def test_find_wan_id_prefers_path(self):
+        # 真机上 ID 不一定叫 InternetConnection_N —— Path 键优先级最高
+        self.assertEqual(
+            tk.find_wan_id({"wan": [{"Path": "1", "ID": "x"},
+                                    {"Path": "2"}]}), "1")
+        self.assertEqual(
+            tk.find_wan_id({"wanTypeActivecontrol": {"Path": "1_INTERNET_R_VID_"}}),
+            "1_INTERNET_R_VID_")
+        # 带 WAN/Internet 的 Path 比普通 Path 更像活动连接
+        self.assertEqual(
+            tk.find_wan_id({"a": {"Path": "2"}, "b": {"Path": "WAN1"}}), "WAN1")
+        # ID 不是 InternetConnection_N 也要认
+        self.assertEqual(tk.find_wan_id({"x": {"ID": "3"}}), "3")
+
+    def test_wan_keys(self):
+        self.assertEqual(tk.wan_keys({"a": 1, "b": 2}), ["a", "b"])
+        self.assertEqual(tk.wan_keys([]), ["[列表 0 项]"])
+        self.assertEqual(tk.wan_keys(None), ["NoneType"])
 
 
 class TestTaskScheduler(unittest.TestCase):

@@ -492,9 +492,9 @@ tr.offrow td{opacity:.62}
     </select>
     <label class="flab" id="tkPowerLab" style="display:none">切换到</label>
     <select id="tkPower" style="display:none">
-      <option value="0">睡眠（省电，覆盖最弱）</option>
-      <option value="1">一般（出厂默认）</option>
-      <option value="2">穿墙（覆盖最强）</option>
+      <option value="0">睡眠模式（省电，覆盖最弱）</option>
+      <option value="1">一般模式（出厂默认）</option>
+      <option value="2">穿墙模式（覆盖最强）</option>
     </select>
     <label class="flab">任务名（可留空）</label>
     <input type="text" id="tkName" placeholder="例如：每晚重启" autocomplete="off">
@@ -1424,8 +1424,8 @@ tr.offrow td{opacity:.62}
     reboot: "到点让路由器重启：约 1 分钟后断开、2~3 分钟恢复。这段时间本程序既不报错也不重试" +
             "（重试就等于反复重启）。",
     redial: "到点让路由器重新拨号，等于「我要上网」页那个「重新连接」按钮。断网十来秒。",
-    wifi_power: "到点切换 Wi-Fi 功率档位。切到「睡眠」会明显缩小覆盖范围，适合夜里。",
-    channel: "到点让路由器自动挑一个更空闲的信道。Wi-Fi 会闪断几十秒，有线不受影响。"
+    wifi_power: "到点切换 Wi-Fi 功率档位。切到「睡眠模式」会明显缩小覆盖范围，适合夜里。",
+    channel: "到点让路由器自动挑一个更空闲的信道。"
   };
 
   function tkCellText(v) {

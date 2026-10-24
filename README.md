@@ -396,7 +396,7 @@ RULES=[{"name":"NAS","port":16669,"mac":"00:11:22:AA:BB:CC"},
 
 ```
 ipv6sync/offline/dist/
-├── ipv6sync-1.1.0-amd64-image.tar     51.4 MB   x86_64 NAS（唯一产物）
+├── ipv6sync-1.1.1-amd64-image.tar     51.4 MB   x86_64 NAS（唯一产物）
 ├── docker-compose.offline.yml          无 build 段的 compose
 ├── .env.example                        环境变量模板
 ├── SHA256SUMS.txt                      tar 的 sha256
@@ -407,7 +407,7 @@ NAS 上只需要四步：
 
 ```bash
 uname -m                                    # 应该是 x86_64
-docker load -i ipv6sync-1.1.0-amd64-image.tar
+docker load -i ipv6sync-1.1.1-amd64-image.tar
 mkdir -p data && sudo chown -R 10001:10001 data
 docker compose -f docker-compose.offline.yml up -d   # 先在 yaml 的 environment 里改 ADMIN_PASSWORD
 ```
@@ -550,6 +550,19 @@ python -m unittest discover -s tests -t . -v
 ---
 
 ## 变更记录
+
+### 1.1.1
+- **修「重新拨号」报「读不到当前 WAN 连接 ID」**：原来只认 `ID/Id/id` 且值必须形如
+  `InternetConnection_N`，真机上两个条件都不成立，于是永远取不到。改成按「字段名有多像
+  连接标识」打分：`Path`（值带 WAN/Internet 最高）> `ID/Id/id` > 裸的
+  `InternetConnection_N`，同分取先出现的。取不到时错误信息会带上 `wan` 返回的字段名，
+  下次一眼能看出缺什么。
+- **功率模式文案带上「模式」**：执行结果显示「已切到『穿墙模式』」，选择框是
+  「睡眠模式 / 一般模式 / 穿墙模式」，与路由器页面用词一致（原来只有「穿墙」）。
+- 信道优化的执行结果与说明里去掉了「Wi-Fi 会短暂闪断」这句冗余提示（「立即执行」
+  前的那次确认弹窗仍保留风险告知）。
+- 手机端设备/任务卡片第一列也显示字段名：MAC 前面有「MAC」，所有值对齐同一竖线。
+- 单测 **237 项**。
 
 ### 1.1.0
 - **新增「计划任务」页**（在「设备列表」之后）：支持定时重启路由器、定时重新拨号、

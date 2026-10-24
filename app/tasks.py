@@ -39,7 +39,7 @@ KINDS = {
     "channel": "信道优化",
 }
 
-POWER_MODES = {0: "睡眠", 1: "一般", 2: "穿墙"}
+POWER_MODES = {0: "睡眠模式", 1: "一般模式", 2: "穿墙模式"}
 
 WINDOW = 180.0          # 计划点之后多久之内还算「到点」
 MAX_TASKS = 32          # 上限，防止误操作灌进来几百条
@@ -165,9 +165,9 @@ def clean_task(raw: dict, now: float | None = None) -> dict:
         try:
             pm = int(pm)
         except (TypeError, ValueError):
-            raise ValueError("Wi-Fi 功率模式要选 睡眠 / 一般 / 穿墙 之一")
+            raise ValueError("Wi-Fi 功率模式要选 睡眠模式 / 一般模式 / 穿墙模式 之一")
         if pm not in POWER_MODES:
-            raise ValueError("功率模式只能是 0(睡眠) / 1(一般) / 2(穿墙)")
+            raise ValueError("功率模式只能是 0(睡眠模式) / 1(一般模式) / 2(穿墙模式)")
         params["power_mode"] = pm
 
     out = {
@@ -206,31 +206,66 @@ def describe(task: dict) -> str:
 # 执行：把「现在做」翻成路由器上那四个按钮
 # --------------------------------------------------------------------------
 
-_ID_RE = re.compile(r"^Internet[A-Za-z0-9_]*\d+$")
+_ID_RE = re.compile(r"^Internet[A-Za-z0-9_.\-]*\d+$")
+_WANISH = re.compile(r"internet|wan", re.I)
+_DETAIL_MAX = 12
 
 
-def find_wan_id(obj, depth: int = 0) -> str:
-    """从 GET wan 的返回里挖出活动连接的 ID。
-
-    固件里前端取的是 `wanTypeActivecontrol.ID`，但不同版本大小写不一致，所以
-    先按已知键取，取不到再在整棵树里找一个形如 InternetConnection_N 的 ID。
-    """
-    if depth > 5:
-        return ""
+def _scan(obj, depth: int, out: list) -> None:
+    """深度优先收集「键名 → 非空字符串值」，键名只保留直接父级那个。"""
+    if depth > 6:
+        return
     if isinstance(obj, dict):
         for k, v in obj.items():
-            if k in ("ID", "Id", "id") and isinstance(v, str) and _ID_RE.match(v):
-                return v
-        for v in obj.values():
-            got = find_wan_id(v, depth + 1)
-            if got:
-                return got
+            if isinstance(v, str) and v.strip():
+                out.append((k, v.strip()))
+            else:
+                _scan(v, depth + 1, out)
     elif isinstance(obj, list):
         for v in obj:
-            got = find_wan_id(v, depth + 1)
-            if got:
-                return got
-    return ""
+            _scan(v, depth + 1, out)
+
+
+def find_wan_id(obj) -> str:
+    """从 GET wan 的返回里挖出活动连接的 ID。
+
+    固件前端取的是 `wanTypeActivecontrol.ID`，但**真机上既不是
+    `InternetConnection_N`、也不一定叫 ID**（2026-10-24 报「读不到当前 WAN
+    连接 ID」就是这么来的），所以不再赌格式，而是按「这个字段有多像连接标识」
+    打分取最高的：
+
+      100  键名 Path，值里带 WAN / Internet（请求体本身就收 `Path`，最像）
+       90  键名 Path
+       80  键名 ID / Id / id，值里带 WAN / Internet
+       70  键名 ID / Id / id
+       60  值本身形如 InternetConnection_1 / …WANPPPConnection.1
+
+    同分取先出现的（深度优先，活动连接一般排在前面）。
+    """
+    pairs: list = []
+    _scan(obj, 0, pairs)
+    best, top = "", 0
+    for k, v in pairs:
+        if k == "Path":
+            s = 100 if _WANISH.search(v) else 90
+        elif k in ("ID", "Id", "id"):
+            s = 80 if _WANISH.search(v) else 70
+        elif _ID_RE.match(v):
+            s = 60
+        else:
+            continue
+        if s > top:
+            best, top = v, s
+    return best
+
+
+def wan_keys(obj) -> list:
+    """诊断用：wan 响应的顶层键（不带值），定位「读不到连接 ID」到底缺什么。"""
+    if isinstance(obj, dict):
+        return [str(k) for k in obj.keys()][:_DETAIL_MAX]
+    if isinstance(obj, list):
+        return ["[列表 %d 项]" % len(obj)]
+    return [type(obj).__name__]
 
 
 def set_power_mode(router, mode: int) -> dict:
@@ -288,7 +323,7 @@ def optimize_channel(router) -> dict:
             if k in info:
                 data[k] = info[k]
     router.post("channelinfo", data)
-    return {"ok": True, "msg": "已发起一键优化信道（Wi-Fi 会短暂闪断）"}
+    return {"ok": True, "msg": "已发起一键优化信道"}
 
 
 def apply(router, task: dict) -> dict:
@@ -302,7 +337,10 @@ def apply(router, task: dict) -> dict:
         wan = router.get("wan")
         path = find_wan_id(wan)
         if not path:
-            return {"ok": False, "msg": "读不到当前 WAN 连接 ID，无法重拨"}
+            keys = wan_keys(wan)
+            return {"ok": False,
+                    "msg": "读不到当前 WAN 连接 ID，无法重拨（wan 返回的字段：%s）"
+                           % ("、".join(keys) or "空")}
         router.post("wan", {"Path": path}, action="reconnect")
         return {"ok": True, "msg": "已发起重新拨号（%s），十来秒后恢复" % path}
     if kind == "wifi_power":
