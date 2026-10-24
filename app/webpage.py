@@ -1451,9 +1451,28 @@ function renderInfo() {
 
   const st = (S.state && S.state.status) || {};
   const ssid = info.ssid || {};
-  const ssidHtml = Object.keys(ssid).length
-    ? '<span class="two">' + Object.entries(ssid).map(([k, v]) =>
-      '<i><em>' + escHtml(k) + '</em>' + escHtml(v) + '</i>').join('') + '</span>'
+  const chans = info.channels || {};
+  const ssidHtml = (() => {
+    const rows = Object.entries(ssid);
+    if (!rows.length && !Object.keys(chans).length) return '—';
+    if (!rows.length) return '<span class="two">' + Object.entries(chans).map(([k, v]) =>
+      '<i><em>' + escHtml(k) + '</em>信道 ' + escHtml(v) + '</i>').join('') + '</span>';
+    return '<span class="two">' + rows.map(([k, v]) => {
+      let tail = '';
+      if (k === '双频合一' && (chans['2.4G'] || chans['5G'])) {
+        tail = ' · 信道 ' + [chans['2.4G'], chans['5G']].filter(Boolean).join(' / ');
+      } else if (chans[k]) {
+        tail = ' · 信道 ' + chans[k];
+      }
+      return '<i><em>' + escHtml(k) + '</em>' + escHtml(v) + tail + '</i>';
+    }).join('') + '</span>';
+  })();
+  // 固件版本：用户要求前面带上 HarmonyOS（真机系统页里「软件版本 6.1.0.20(V7R2)」
+  // 属于 HarmonyOS 体系）；harmony 单独的字段放 title 提示
+  const fw = info.firmware || info.harmony;
+  const fwHtml = fw
+    ? '<span title="' + escAttr(info.harmony ? 'HarmonyOS 版本 ' + info.harmony : '') + '">'
+      + escHtml((info.harmony || info.firmware ? 'HarmonyOS ' : '') + fw) + '</span>'
     : '—';
   const cells = [
     ['运行时长', escHtml(info.uptime || '—')],
@@ -1463,7 +1482,11 @@ function renderInfo() {
     ['WAN IPv6', info.wan6
       ? '<button class="cp" data-cp="' + escAttr(info.wan6) + '">' + svgI('copy')
         + '<span>' + escHtml(info.wan6) + '</span></button>' : '—'],
+    ['IPv6 前缀', escHtml(info.prefix6 || '—')],
     ['Wi-Fi 名称', ssidHtml],
+    ['LAN IPv4', info.lan_ip4
+      ? '<button class="cp" data-cp="' + escAttr(info.lan_ip4) + '">' + svgI('copy')
+        + '<span>' + escHtml(info.lan_ip4) + '</span></button>' : '—'],
     ['在线设备', (S.info && S.info.hosts_total)
       ? escHtml(S.info.hosts_online + ' / ' + S.info.hosts_total + ' 台') : '—'],
     ['IPv6 白名单', (() => {
@@ -1477,7 +1500,7 @@ function renderInfo() {
           ? ' <span class="badge badge-plain" style="font-weight:400;margin-left:2px"><span class="dot"></span>已关闭</span>'
           : '')],
     ['上次同步', escHtml(ago(st.last_success_at))],
-    ['固件版本', escHtml(info.firmware || '—')],
+    ['固件版本', fwHtml],
   ];
   grid.innerHTML = cells.map(([k, v]) =>
     '<div class="kv"><div class="k">' + k + '</div><div class="v mono">' + v + '</div></div>').join('');
