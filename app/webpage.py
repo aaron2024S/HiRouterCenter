@@ -319,10 +319,7 @@ tr.offrow td{opacity:.62}
 
   <div id="tab-tasks" class="hide">
     <div class="card">
-      <h2>计划任务<button id="btnTasks" class="primary hbtn"><svg viewBox="0 0 16 16" width="13" height="13"
-        style="vertical-align:-2px" aria-hidden="true"><path fill="none"
-        stroke="currentColor" stroke-width="1.8" stroke-linecap="round"
-        d="M13.5 8a5.5 5.5 0 1 1-1.6-3.9M13.5 1.8v2.7h-2.7"/></svg> 刷新</button></h2>
+      <h2>计划任务</h2>
       <div class="toolbar tkbar" style="margin-bottom:10px">
         <button id="btnTaskAdd" class="primary">＋ 添加任务</button>
         <span class="desc" style="margin:0" id="taskMeta"></span>
@@ -999,7 +996,6 @@ tr.offrow td{opacity:.62}
     els.login.classList.add("hide");
     els.app.classList.remove("hide");
     load(false).then(function () {
-      toast("已登录", "ok");
       loadWL();               // 白名单是主页的核心卡片，进来就拉一次
     }).catch(function (e) { toast("加载失败：" + e, "err"); });
   }
@@ -1045,7 +1041,7 @@ tr.offrow td{opacity:.62}
     curTab = name;
     syncFoot();
     if (name === "devices" && !hostsLoaded) { loadHosts(); }   // 首次打开自动拉一次
-    if (name === "tasks" && !tkLoaded) { loadTasks(); }
+    if (name === "tasks") { loadTasks(); }                      // 纯本地数据，每次进来都拉最新
   }
   document.getElementById("tabbtn-main").addEventListener("click", function () { switchTab("main"); });
   document.getElementById("tabbtn-devices").addEventListener("click", function () { switchTab("devices"); });
@@ -1364,7 +1360,6 @@ tr.offrow td{opacity:.62}
   document.getElementById("btnHosts").addEventListener("click", function () { loadHosts(); });
 
   // ---------- 计划任务（调度在这台机器上算，路由器只负责「现在做」） ----------
-  var tkLoaded = false;
   var tkData = { tasks: [], quiet_left: 0 };
   var tkEditing = null;          // null = 新增；否则是正在编辑的任务 id
   var tkDays = [1, 2, 3, 4, 5, 6, 7];
@@ -1513,23 +1508,19 @@ tr.offrow td{opacity:.62}
   }
 
   function loadTasks() {
-    var btn = document.getElementById("btnTasks");
-    btn.disabled = true;
     return api("/api/tasks").then(function (j) {
       showOut("计划任务", j);
       if (!j.ok) { toast("读取计划任务失败：" + (j.error || ""), "err"); return; }
       tkData = j;
-      tkLoaded = true;
       renderTasks();
-    }).catch(function (e) { showOut("计划任务", "请求失败：" + e); })
-      .then(function () { btn.disabled = false; });
+    }).catch(function (e) { showOut("计划任务", "请求失败：" + e); });
   }
 
   function tkDayButtons() {
     var box = document.getElementById("tkDays");
     box.textContent = "";
     [1, 2, 3, 4, 5, 6, 7].forEach(function (d) {
-      var b = tkCellBtn(TK_WEEK[d], tkDays.indexOf(d) >= 0 ? "on" : "", function () {
+      var b = tkCellBtn(null, TK_WEEK[d], tkDays.indexOf(d) >= 0 ? "on" : "", function () {
         var i = tkDays.indexOf(d);
         if (i >= 0 && tkDays.length > 1) { tkDays.splice(i, 1); }
         else if (i < 0) { tkDays.push(d); }
@@ -1648,7 +1639,6 @@ tr.offrow td{opacity:.62}
       .catch(function (e) { toast("请求失败：" + e, "err"); });
   }
 
-  document.getElementById("btnTasks").addEventListener("click", function () { loadTasks(); });
   document.getElementById("btnTaskAdd").addEventListener("click", function () { tkOpen(null); });
   document.getElementById("tkKind").addEventListener("change", tkKindChange);
   document.getElementById("tkCancel").addEventListener("click", tkClose);
