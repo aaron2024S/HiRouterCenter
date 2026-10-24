@@ -590,7 +590,7 @@ class Tasks:
                 t["last_run_at"] = time.strftime(
                     "%Y-%m-%d %H:%M:%S", time.localtime(slot))
                 t["last_ok"] = True
-                t["last_msg"] = "已错过（容器当时没在运行），未补跑"
+                t["last_msg"] = "已错过（容器当时没在运行）"
                 out.append(t["name"])
             if out:
                 self._save_locked()
