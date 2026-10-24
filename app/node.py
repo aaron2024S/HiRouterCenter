@@ -107,8 +107,9 @@ def _parse_blacklist(res) -> list:
                     if isinstance(e, dict):
                         mac = (e.get("MACAddress") or e.get("MacAddress")
                                or e.get("BMACAddress") or e.get("mac"))
-                        name = (e.get("HostName") or e.get("hostname")
-                                or e.get("devName") or e.get("DeviceName"))
+                        name = (e.get("ActualName") or e.get("HostName")
+                                or e.get("hostname") or e.get("devName")
+                                or e.get("DeviceName"))
                         add(mac, name or "", b)
                     else:
                         add(e, "", b)
@@ -377,7 +378,7 @@ class Node:
             active = _truthy(h.get("Active"))
             rows.append({
                 "mac": h.get("MACAddress", "") or "",
-                "name": (h.get("HostName") or h.get("ActualName") or "")[:48],
+                "name": discover.host_display_name(h),
                 "ipv4": h.get("IPAddress", "") or "",
                 "ipv6": addrs,
                 "active": active,

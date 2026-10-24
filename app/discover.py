@@ -196,6 +196,22 @@ def local_macs() -> set[str]:
 # 路由器 HostInfo（只给「设备列表」页查 MAC 用，不参与取址）
 # --------------------------------------------------------------------------
 
+def host_display_name(host: dict) -> str:
+    """设备在界面上显示的名字。规则与路由器 Web 页保持一致：**ActualName 优先**。
+
+    ActualName 是用户在路由器上手动改的名字；HostName 是设备自己上报的 DHCP
+    主机名。顺序一旦写反就会出现「界面上的名字和路由器页面不一样」，常见两种：
+      · HostName 里非 ASCII 被设备打成问号（手动改的「华为畅享 50z」显示成 ????_50z）；
+      · HostName 上报的是机型（如「荣耀X30 Max」），而用户改的名字在 ActualName。
+    固件前端（chunk 39 的 friendlyName）也是 `ActualName || HostName || MAC`。
+    """
+    for k in ("ActualName", "HostName"):
+        v = host.get(k)
+        if isinstance(v, str) and v.strip():
+            return v.strip()[:48]
+    return ""
+
+
 def host_candidates(host: dict) -> list[str]:
     """把 HostInfo 里一台设备的全部 IPv6 地址抽出来（含 Ipv6Addrs 数组）。
 

@@ -233,6 +233,21 @@ class TestRouterDeviceList(unittest.TestCase):
         self.assertEqual(discover.host_candidates(host),
                          [OLD_ADDR, "240e:3a4:48ff:6d10::99"])
 
+    def test_display_name_prefers_actual_name(self):
+        """用户手动改的名字在 ActualName，必须优先 —— 与路由器 Web 页一致。"""
+        # HostName 里非 ASCII 被设备打成了问号
+        self.assertEqual(discover.host_display_name(
+            {"ActualName": "华为畅享 50z", "HostName": "????_50z"}), "华为畅享 50z")
+        # HostName 是设备自己上报的机型，不是用户起的名字
+        self.assertEqual(discover.host_display_name(
+            {"ActualName": "荣耀畅玩30 Plus", "HostName": "荣耀X30 Max"}), "荣耀畅玩30 Plus")
+
+    def test_display_name_falls_back(self):
+        self.assertEqual(discover.host_display_name({"HostName": "DESKTOP-1"}), "DESKTOP-1")
+        self.assertEqual(discover.host_display_name({"ActualName": "  ",
+                                                     "HostName": "NAS"}), "NAS")
+        self.assertEqual(discover.host_display_name({}), "")
+
 
 class TestTrustlistCrud(unittest.TestCase):
     def test_add_then_upsert_unchanged(self):

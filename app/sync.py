@@ -231,7 +231,7 @@ class Syncer:
                     return [], "路由器第一条地址与本机网卡不符（残留旧地址），本轮跳过"
         except OSError as e:  # noqa: BLE001
             log.debug("读本机网卡信息失败，跳过幽灵校验：%s", e)
-        dev_name = host.get("HostName") or host.get("ActualName") or nm
+        dev_name = discover.host_display_name(host) or nm
         return cands[:1], f"路由器设备表「{dev_name}」第 1 条地址"
 
     # ---------------- 单条规则同步 ----------------
