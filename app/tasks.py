@@ -125,6 +125,10 @@ def due_slot(task: dict, now: float, window: float = WINDOW) -> float | None:
     slot = last_slot(task, now)
     if slot is None or (now - slot) > window:
         return None
+    # 计划生效之前的点根本不存在 —— 14:00 新建的「每天 10:00」任务，
+    # 今天 10:00 那次不应该被当成到点，更不该立刻执行。
+    if slot <= float(task.get("since") or 0):
+        return None
     if float(task.get("last_slot") or 0) >= slot:
         return None
     return slot
@@ -183,6 +187,12 @@ def clean_task(raw: dict, now: float | None = None) -> dict:
     for k in ("last_slot", "last_run_at", "last_ok", "last_msg"):
         if k in raw:
             out[k] = raw[k]
+    # 计划生效时刻：早于它的计划点不算「到点」，也不算「已错过」。
+    # 旧文件里没有这个字段 → 0，行为与以前一致。
+    try:
+        out["since"] = float(raw.get("since") or 0)
+    except (TypeError, ValueError):
+        out["since"] = 0.0
     return out
 
 
@@ -387,7 +397,7 @@ class Tasks:
     请求失败、重则会话被注销。所以任务执行必须和同步轮次串行。
     """
 
-    def __init__(self, get_router, path: str, guard=None):
+    def __init__(self, get_router, path: str, guard=None, clock=None):
         self._get_router = get_router
         self.path = path
         if guard is None:
@@ -395,6 +405,9 @@ class Tasks:
             self._guard = contextlib.nullcontext
         else:
             self._guard = guard
+        # 只用来给「计划生效时刻」（since）打时间戳；测试注入固定时钟，
+        # 生产里就是 time.time。
+        self._clock = clock or time.time
         self._lock = threading.RLock()
         self._items: list[dict] = []
         self._quiet_until = 0.0
@@ -471,14 +484,24 @@ class Tasks:
 
     def upsert(self, raw: dict) -> dict:
         task = clean_task(raw)
+        stamp = self._clock()
         with self._lock:
             for i, t in enumerate(self._items):
                 if t["id"] == task["id"]:
+                    # 改了执行时间/星期/类型 = 计划重新开始，从这一刻起算；
+                    # 只改名字或启停则保留原来的生效时刻。
+                    resched = ((t.get("at"), t.get("days") or [], t.get("kind"))
+                               != (task.get("at"), task.get("days") or [],
+                                   task.get("kind")))
+                    task["since"] = stamp if resched else float(t.get("since") or 0.0)
                     self._items[i] = task
                     self._save_locked()
                     return {"ok": True, "task": task}
             if len(self._items) >= MAX_TASKS:
                 raise ValueError("最多 %d 个任务" % MAX_TASKS)
+            # 新建：计划从这一刻起才存在。否则「14:00 建的每天 10:00 任务」
+            # 会被回头判定为今天 10:00「已错过」——那是任务还没出生时的点。
+            task["since"] = stamp
             self._items.append(task)
             self._save_locked()
         return {"ok": True, "task": task}
@@ -496,7 +519,12 @@ class Tasks:
         with self._lock:
             for t in self._items:
                 if t["id"] == tid:
+                    was = bool(t.get("enabled", True))
                     t["enabled"] = bool(enabled)
+                    if enabled and not was:
+                        # 重新启用时重新计时：停用期间没跑是应该的，
+                        # 不能起来就报一串「已错过」。
+                        t["since"] = self._clock()
                     self._save_locked()
                     return {"ok": True, "enabled": t["enabled"]}
         raise ValueError("没有这个任务")
@@ -607,6 +635,10 @@ class Tasks:
                     continue
                 slot = last_slot(t, now)
                 if slot is None or (now - slot) <= WINDOW:
+                    continue
+                # 任务当时还不存在（或刚改过计划）—— 那个点不是「错过」，
+                # 是根本没安排。14:00 新建的「每天 10:00」就属于这种。
+                if slot <= float(t.get("since") or 0):
                     continue
                 if float(t.get("last_slot") or 0) >= slot:
                     continue

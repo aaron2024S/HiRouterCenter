@@ -1276,6 +1276,15 @@ def _epoch(y, mo, d, h, mi):
     return time.mktime((y, mo, d, h, mi, 0, 0, 0, -1))
 
 
+def _task_clock():
+    """任务的「计划生效时刻」默认落在测试当天的 0 点。
+
+    这样「先建任务、再 tick(当天 04:30)」的用例仍然成立（4:30 晚于 0 点），
+    而真要验证「新建任务不回头报错过」的用例会显式传自己的 clock。
+    """
+    return _epoch(2026, 10, 24, 0, 0)
+
+
 class TestTaskTime(unittest.TestCase):
     """到点判定：这是整块功能里唯一容易算错的地方。"""
 
@@ -1377,11 +1386,11 @@ class TestTaskModel(unittest.TestCase):
     def test_roundtrip_persistence(self):
         with tempfile.TemporaryDirectory() as d:
             path = os.path.join(d, "tasks.json")
-            a = tk.Tasks(lambda: FakeActionRouter(), path)
+            a = tk.Tasks(lambda: FakeActionRouter(), path, clock=_task_clock)
             a.upsert({"kind": "reboot", "at": "04:30", "name": "每晚重启"})
             a.upsert({"kind": "wifi_power", "at": "22:00",
                       "params": {"power_mode": 0}})
-            b = tk.Tasks(lambda: FakeActionRouter(), path)
+            b = tk.Tasks(lambda: FakeActionRouter(), path, clock=_task_clock)
             view = b.view()
             self.assertEqual(len(view["tasks"]), 2)
             self.assertEqual(view["tasks"][0]["when"], "每天 04:30")
@@ -1390,7 +1399,7 @@ class TestTaskModel(unittest.TestCase):
     def test_delete_and_toggle(self):
         with tempfile.TemporaryDirectory() as d:
             path = os.path.join(d, "tasks.json")
-            s = tk.Tasks(lambda: FakeActionRouter(), path)
+            s = tk.Tasks(lambda: FakeActionRouter(), path, clock=_task_clock)
             tid = s.upsert({"kind": "reboot", "at": "04:30"})["task"]["id"]
             self.assertFalse(s.toggle(tid, False)["enabled"])
             self.assertFalse(s.view()["tasks"][0]["enabled"])
@@ -1555,7 +1564,7 @@ class TestTaskApply(unittest.TestCase):
 class TestTaskScheduler(unittest.TestCase):
     def make(self, d, router=None):
         router = router or FakeActionRouter()
-        return tk.Tasks(lambda: router, os.path.join(d, "tasks.json")), router
+        return tk.Tasks(lambda: router, os.path.join(d, "tasks.json"), clock=_task_clock), router
 
     def test_tick_fires_once_and_records(self):
         with tempfile.TemporaryDirectory() as d:
@@ -1581,10 +1590,10 @@ class TestTaskScheduler(unittest.TestCase):
         """容器恰好在这时重启，静默期也要继续生效，否则会立刻再触发一次。"""
         with tempfile.TemporaryDirectory() as d:
             path = os.path.join(d, "tasks.json")
-            s1 = tk.Tasks(lambda: FakeActionRouter(), path)
+            s1 = tk.Tasks(lambda: FakeActionRouter(), path, clock=_task_clock)
             s1.upsert({"kind": "reboot", "at": "04:30"})
             s1.tick(_epoch(2026, 10, 24, 4, 30))
-            s2 = tk.Tasks(lambda: FakeActionRouter(), path)
+            s2 = tk.Tasks(lambda: FakeActionRouter(), path, clock=_task_clock)
             self.assertGreater(s2.quiet_left(), 0)
 
     def test_only_one_task_per_slot(self):
@@ -1615,6 +1624,77 @@ class TestTaskScheduler(unittest.TestCase):
             self.assertIsNone(s.tick(_epoch(2026, 10, 24, 4, 30)))
             self.assertFalse(r.rebooted)
 
+    def _tasks_at(self, d, router, at):
+        """造一个「现在恰好是 at」的 Tasks（clock 只影响计划生效时刻）。"""
+        box = {"now": at}
+        s = tk.Tasks(lambda: router, os.path.join(d, "tasks.json"),
+                     clock=lambda: box["now"])
+        return s, box
+
+    def test_new_task_is_not_marked_missed(self):
+        """14:00 新建「每天 10:00」：今天 10:00 那时还没这个任务，不能算错过。"""
+        with tempfile.TemporaryDirectory() as d:
+            r = FakeActionRouter()
+            s, _ = self._tasks_at(d, r, _epoch(2026, 10, 24, 14, 0))
+            s.upsert({"kind": "reboot", "at": "10:00"})
+            self.assertEqual(s.mark_missed(_epoch(2026, 10, 24, 14, 5)), [])
+            t = s.view()["tasks"][0]
+            self.assertIsNone(t.get("last_ok"))      # 界面：还没执行过
+            self.assertFalse(t.get("last_run_at"))
+            self.assertFalse(t.get("last_msg"))
+            self.assertFalse(r.rebooted)
+
+    def test_new_task_does_not_run_for_a_passed_slot(self):
+        """14:00:30 建一个 14:00 的任务，也不该立刻执行 —— 那个点在建之前。"""
+        with tempfile.TemporaryDirectory() as d:
+            r = FakeActionRouter()
+            s, _ = self._tasks_at(d, r, _epoch(2026, 10, 24, 14, 0))
+            s.upsert({"kind": "reboot", "at": "14:00"})
+            self.assertIsNone(s.tick(_epoch(2026, 10, 24, 14, 1)))
+            self.assertFalse(r.rebooted)
+
+    def test_task_created_before_its_slot_still_fires(self):
+        """对照组：13:59 建 14:00 的任务，到点要正常执行。"""
+        with tempfile.TemporaryDirectory() as d:
+            r = FakeActionRouter()
+            s, _ = self._tasks_at(d, r, _epoch(2026, 10, 24, 13, 59))
+            s.upsert({"kind": "reboot", "at": "14:00"})
+            res = s.tick(_epoch(2026, 10, 24, 14, 0))
+            self.assertTrue(res["ok"])
+            self.assertTrue(r.rebooted)
+
+    def test_old_task_still_reported_missed(self):
+        """对照组的反面：任务早就存在，那个点没人跑，才叫「已错过」。"""
+        with tempfile.TemporaryDirectory() as d:
+            r = FakeActionRouter()
+            s, box = self._tasks_at(d, r, _epoch(2026, 10, 20, 9, 0))
+            s.upsert({"kind": "reboot", "at": "10:00"})
+            box["now"] = _epoch(2026, 10, 24, 14, 0)     # 容器 4 天后才起来
+            self.assertEqual(s.mark_missed(_epoch(2026, 10, 24, 14, 5)),
+                             ["重启路由器"])
+
+    def test_changing_schedule_resets_since(self):
+        """改了执行时间 = 重新排期，改之前的点不能算错过。"""
+        with tempfile.TemporaryDirectory() as d:
+            r = FakeActionRouter()
+            s, box = self._tasks_at(d, r, _epoch(2026, 10, 20, 9, 0))
+            tid = s.upsert({"kind": "reboot", "at": "10:00"})["task"]["id"]
+            box["now"] = _epoch(2026, 10, 24, 14, 10)
+            s.upsert({"id": tid, "kind": "reboot", "at": "09:00"})   # 改成 09:00
+            # 今天 09:00 早于「计划生效时刻 14:10」，不该被记成错过
+            self.assertEqual(s.mark_missed(_epoch(2026, 10, 24, 14, 20)), [])
+
+    def test_reenable_resets_since(self):
+        """停用期间没跑是应该的；重新启用后不能起来就报一串「已错过」。"""
+        with tempfile.TemporaryDirectory() as d:
+            r = FakeActionRouter()
+            s, box = self._tasks_at(d, r, _epoch(2026, 10, 20, 9, 0))
+            tid = s.upsert({"kind": "reboot", "at": "10:00"})["task"]["id"]
+            s.toggle(tid, False)
+            box["now"] = _epoch(2026, 10, 24, 14, 0)
+            s.toggle(tid, True)
+            self.assertEqual(s.mark_missed(_epoch(2026, 10, 24, 14, 5)), [])
+
     def test_manual_run_ignores_window(self):
         with tempfile.TemporaryDirectory() as d:
             s, r = self.make(d)
@@ -1628,7 +1708,7 @@ class TestTaskScheduler(unittest.TestCase):
             class Boom(FakeActionRouter):
                 def post(self, *a, **k):
                     raise RuntimeError("路由器掉线")
-            s = tk.Tasks(lambda: Boom(), os.path.join(d, "tasks.json"))
+            s = tk.Tasks(lambda: Boom(), os.path.join(d, "tasks.json"), clock=_task_clock)
             s.upsert({"kind": "reboot", "at": "04:30"})
             now = _epoch(2026, 10, 24, 4, 30)
             res = s.tick(now)
@@ -1652,7 +1732,7 @@ class TestTaskScheduler(unittest.TestCase):
                         seen["hit"] = json.load(f)["tasks"][0]["last_slot"]
                     return {}
 
-            s = tk.Tasks(lambda: Check(), path)
+            s = tk.Tasks(lambda: Check(), path, clock=_task_clock)
             s.upsert({"kind": "reboot", "at": "04:30"})
             now = _epoch(2026, 10, 24, 4, 30)
             s.tick(now)
@@ -1663,7 +1743,7 @@ class TestTaskScheduler(unittest.TestCase):
             path = os.path.join(d, "tasks.json")
             with open(path, "w", encoding="utf-8") as f:
                 f.write("{ 这不是 json")
-            s = tk.Tasks(lambda: FakeActionRouter(), path)
+            s = tk.Tasks(lambda: FakeActionRouter(), path, clock=_task_clock)
             self.assertEqual(s.view()["tasks"], [])
             s.upsert({"kind": "reboot", "at": "04:30"})   # 还能正常用
             self.assertEqual(len(s.view()["tasks"]), 1)
