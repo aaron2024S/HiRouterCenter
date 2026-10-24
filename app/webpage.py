@@ -1012,7 +1012,7 @@ html[data-theme="light"] .tpick-mask{background:rgba(30,34,56,.34)}
         </div>
 
         <div class="card">
-          <div class="ch"><svg class="i"><use href="#i-fw6"/></svg><span>白名单规则</span>
+          <div class="ch"><svg class="i"><use href="#i-fw6"/></svg><span>白名单同步规则</span>
             <span class="hint">规则跟着设备走，地址一变自动原地更新</span></div>
           <div class="tblwrap">
             <table class="tbl tbl-fixed">
@@ -1036,11 +1036,11 @@ html[data-theme="light"] .tpick-mask{background:rgba(30,34,56,.34)}
           <div class="tblwrap">
             <table class="tbl tbl-fixed">
               <thead><tr>
-                <th style="width:180px">条目名称</th>
-                <th>本机 / 地址</th>
-                <th style="width:90px">端口</th>
-                <th style="width:140px">允许来源</th>
-                <th style="width:140px"></th>
+                <th style="width:180px">服务名称</th>
+                <th style="width:170px">CIDR/Remote IP</th>
+                <th>本地 IP</th>
+                <th style="width:90px">通信端口</th>
+                <th style="width:150px">操作</th>
               </tr></thead>
               <tbody id="entRows"></tbody>
             </table>
@@ -1355,6 +1355,10 @@ function escHtml(s) {
     .replace(/>/g, '&gt;');
 }
 function escAttr(s) { return escHtml(s).replace(/"/g, '&quot;'); }
+/* MAC 归一化比较键：规则存储的是 12 位无分隔小写 hex（后端 norm_mac），
+   路由器 HostInfo 是 XX:XX:… 带冒号形式 —— 直接 toUpperCase 比较永远不相等
+   （1.2.2 前「编辑规则定位不到设备 / 表格里显示不出设备名」就是这条）。 */
+function macKey(s) { return String(s || '').replace(/[^0-9a-f]/gi, '').toUpperCase(); }
 function toast(title, sub, icon) {
   const box = $('#toasts');
   const t = el('div', 'toast', '<svg class="i"><use href="#i-' + (icon || 'check') + '"/></svg>'
@@ -1561,7 +1565,8 @@ function renderInfo() {
         : ((S.state && S.state.overview && (S.state.overview.rules || []).length) || 0);
       const ent = (S.wl && S.wl.ok && S.wl.entries) ? S.wl.entries.length : null;
       const main = n || (S.wl && S.wl.ok)
-        ? escHtml(n + ' 条规则') + (ent != null ? ' · 路由器上 ' + escHtml(ent) + ' 个条目' : '')
+        ? '同步规则 ' + escHtml(String(n)) + ' 条'
+          + (ent != null ? ' · 路由器上 ' + escHtml(String(ent)) + ' 条' : '')
         : '—';
       return main;
     })()
@@ -1603,9 +1608,9 @@ function devRows() {
 }
 function visibleHosts() {
   const q = S.devQuery.trim().toLowerCase();
-  const bl = new Set(((S.hosts && S.hosts.blacklist) || []).map(x => (x.mac || '').toUpperCase()));
+  const bl = new Set(((S.hosts && S.hosts.blacklist) || []).map(x => macKey(x.mac)));
   return devRows().filter(d => {
-    const black = bl.has((d.mac || '').toUpperCase());
+    const black = bl.has(macKey(d.mac));
     if (S.devFilter === 'online' && !d.active) return false;
     if (S.devFilter === 'offline' && d.active) return false;
     if (S.devFilter === 'black' && !black) return false;
@@ -1617,8 +1622,8 @@ function visibleHosts() {
 }
 function ruleOf(mac) {
   const rules = (S.hosts && S.hosts.rules) || [];
-  const m = String(mac || '').toUpperCase();
-  return rules.find(r => String(r.mac || '').toUpperCase() === m) || null;
+  const m = macKey(mac);
+  return rules.find(r => macKey(r.mac) === m) || null;
 }
 function renderDevices() {
   const grid = $('#devGrid');
@@ -1629,11 +1634,11 @@ function renderDevices() {
       + '</div></div>';
     return;
   }
-  const bl = new Set(((h.blacklist) || []).map(x => (x.mac || '').toUpperCase()));
+  const bl = new Set(((h.blacklist) || []).map(x => macKey(x.mac)));
   const list = visibleHosts();
   grid.innerHTML = '';
   for (const d of list) {
-    const black = bl.has(String(d.mac || '').toUpperCase());
+    const black = bl.has(macKey(d.mac));
     const card = el('div', 'dev' + (d.active ? '' : ' off') + (black ? ' black' : ''));
     const head = el('div', 'dev-head');
     const av = el('button', 'avatar', tIcon(typeOf(d)));
@@ -1726,10 +1731,10 @@ function renderCounts() {
   const rows = devRows();
   const h = S.hosts;
   if (S.hosts && S.hosts.ok) {
-    const bl = new Set(((h.blacklist) || []).map(x => (x.mac || '').toUpperCase()));
+    const bl = new Set(((h.blacklist) || []).map(x => macKey(x.mac)));
     const online = rows.filter(d => d.active).length;
     const kids = rows.filter(d => d.kids).length;
-    const black = rows.filter(d => bl.has(String(d.mac || '').toUpperCase())).length;
+    const black = rows.filter(d => bl.has(macKey(d.mac))).length;
     const chips = [
       ['all', '全部', rows.length], ['online', '在线', online],
       ['offline', '离线', rows.length - online], ['black', '黑名单', black],
@@ -1892,7 +1897,7 @@ function renderFirewall() {
   const st = (S.state && S.state.status) || {};
   const c = st.counters || {};
   const kv = [
-    ['白名单规则', (wl.rules || []).length + ' 条'],
+    ['白名单同步规则', (wl.rules || []).length + ' 条'],
     ['上次同步', escHtml(ago(st.last_success_at))],
     ['累计写入', (st.total_writes || 0) + ' 次'],
     ['下次检测', (() => {
@@ -1910,7 +1915,7 @@ function renderFirewall() {
   /* 规则表 */
   const hosts = wl.hosts || [];
   const byMac = {};
-  hosts.forEach(h => { byMac[String(h.mac || '').toUpperCase()] = h; });
+  hosts.forEach(h => { byMac[macKey(h.mac)] = h; });
   // 规则是否已在路由器上生效：与后端 trustlist.managed_pattern 一致，
   // 基础名、基础名@N、各自可再带 -端口。**按实读条目判**，不按设备在线 ——
   // 设备离线时条目仍保留在路由器上，照样是生效的；不绑定设备的规则（如 NAS）更没有「离线」一说。
@@ -1927,7 +1932,7 @@ function renderFirewall() {
   const tb = $('#ruleRows');
   tb.innerHTML = '';
   (wl.rules || []).forEach(r => {
-    const h = byMac[String(r.mac || '').toUpperCase()];
+    const h = byMac[macKey(r.mac)];
     const tr = document.createElement('tr');
     const mine = entriesOf(r.name);
     const synced = mine.length > 0;
@@ -1940,7 +1945,10 @@ function renderFirewall() {
       : '<span class="sub">还没写入</span>';
     tr.innerHTML = '<td><b style="font-weight:600">' + escHtml(r.name) + '</b></td>'
       + '<td>' + (h ? escHtml(h.name) + '<div class="mono" style="font-size:11px;color:var(--text-5)">'
-        + escHtml(r.mac) + '</div>' : '<span class="sub">（不绑定设备）</span>') + '</td>'
+        + escHtml(r.mac) + '</div>'
+        : r.mac
+          ? escHtml(r.mac) + '<div class="sub">绑定的设备不在当前列表</div>'
+          : '<span class="sub">（不绑定设备）</span>') + '</td>'
       + '<td>' + addrCell + '</td>'
       + '<td>' + escHtml(String(r.port)) + '</td>'
       + '<td class="mono">' + escHtml(r.remote_ip) + '</td>'
@@ -1950,7 +1958,7 @@ function renderFirewall() {
           ? '<span class="badge badge-warn">设备离线 · 待同步</span>'
           : '<span class="badge badge-plain">待同步</span>') + '</td>'
       + '<td><div class="acts"><button class="btn btn-sm" data-a="edit">' + svgI('edit') + '编辑</button>'
-      + '<button class="btn btn-sm btn-danger" data-a="del">' + svgI('trash') + '</button></div></td>';
+      + '<button class="btn btn-sm btn-danger" data-a="del">' + svgI('trash') + '删除</button></div></td>';
     tr.querySelectorAll('button[data-ip]').forEach(b => b.addEventListener('click', () => {
       const ip = b.dataset.ip;
       const old = b.innerHTML;
@@ -1976,15 +1984,16 @@ function renderFirewall() {
     const nm = e.Name || e.name || '—';
     const owned = ownerOf(nm);
     const tr = document.createElement('tr');
+    // 列序对齐华为路由器自带页面：服务名称 / CIDR/Remote IP / 本地 IP / 通信端口 / 操作
     tr.innerHTML = '<td class="mono" style="font-size:12px">' + escHtml(nm)
       + (owned ? '<span class="badge badge-accent" style="margin-left:6px">自动维护</span>'
         : '<span class="badge badge-plain" style="margin-left:6px">手工</span>') + '</td>'
+      + '<td class="mono" style="font-size:11.5px">' + escHtml(e.RemoteIp || e.remote_ip || '::/0') + '</td>'
       + '<td class="mono" style="font-size:11.5px">' + escHtml(e.LocalIp || e.local_ip || '—') + '</td>'
       + '<td>' + escHtml(String(e.Port == null || e.Port === '-1' ? '全部' : e.Port)) + '</td>'
-      + '<td class="mono" style="font-size:11.5px">' + escHtml(e.RemoteIp || e.remote_ip || '::/0') + '</td>'
       + '<td><div class="acts">'
       + '<button class="btn btn-sm" data-a="edit">' + svgI('edit') + '编辑</button>'
-      + '<button class="btn btn-sm btn-danger" data-a="del">' + svgI('trash') + '</button></div></td>';
+      + '<button class="btn btn-sm btn-danger" data-a="del">' + svgI('trash') + '删除</button></div></td>';
     tr.querySelector('[data-a="edit"]').addEventListener('click', () => entryDialog(e, owned));
     tr.querySelector('[data-a="del"]').addEventListener('click', async () => {
       if (!confirm('从路由器白名单里删除这条条目？')) return;
@@ -2075,6 +2084,22 @@ $('#btnSyncNow').addEventListener('click', async () => {
 });
 
 /* 规则弹窗 */
+/* 规则弹窗的设备下拉：按归一化 MAC 定位当前设备；
+   规则绑定的设备不在列表 / 没绑设备时，补一个对应的选项并选中，
+   不能默默落在第一台设备上（那会把规则改绑到别的设备）。 */
+function devOptions(hosts, curMac) {
+  const cur = macKey(curMac);
+  const opts = hosts.map(h =>
+    '<option value="' + escAttr(h.mac) + '"' + (macKey(h.mac) === cur ? ' selected' : '')
+    + '>' + escHtml((h.name || '未知') + ' · ' + h.mac + (h.active ? '' : '（离线）')) + '</option>');
+  if (!cur) {
+    opts.unshift('<option value="" selected>（不绑定设备）</option>');
+  } else if (!hosts.some(h => macKey(h.mac) === cur)) {
+    opts.unshift('<option value="' + escAttr(curMac) + '" selected>'
+      + escHtml('（绑定的设备不在当前列表）· ' + curMac) + '</option>');
+  }
+  return opts.join('');
+}
 function ruleDialog(src) {
   const isNew = !src;
   const hosts = (S.wl && S.wl.hosts) || [];
@@ -2086,10 +2111,9 @@ function ruleDialog(src) {
     + '<button class="btn btn-sm" type="button" data-a="x">关闭</button></div>'
     + '<div class="ebody">'
     + '<div class="efld"><label>设备<em>*</em></label>'
-    + '<select class="sel" id="rDev">' + hosts.map(h =>
-      '<option value="' + escAttr(h.mac) + '"' + (String(h.mac).toUpperCase() === String(cur.mac).toUpperCase() ? ' selected' : '')
-      + '>' + escHtml((h.name || '未知') + ' · ' + h.mac + (h.active ? '' : '（离线）')) + '</option>').join('')
-    + '</select><div class="hp">放行哪台设备；规则会跟着这台设备的地址变化自动更新</div></div>'
+    + '<select class="sel" id="rDev">' + devOptions(hosts, cur.mac) + '</select>'
+    + '<div class="hp">放行哪台设备；规则会跟着这台设备的地址变化自动更新。'
+    + '「不绑定设备」= 只按下面手填的服务名与地址放行，不跟随任何设备</div></div>'
     + '<div class="egrid2">'
     + '<div class="efld"><label>服务名称<em>*</em></label>'
     + '<input class="inp" id="rName" value="' + escAttr(cur.name) + '" placeholder="例如 NAS"></div>'
@@ -2348,10 +2372,10 @@ function taskDialog(src) {
       pickedDevs = new Set();
       return;
     }
-    const preset = ((cur.params || {}).devices || []).map(d => String(d.mac || '').toUpperCase());
+    const preset = ((cur.params || {}).devices || []).map(d => macKey(d.mac));
     pickedDevs = new Set(preset);
     box2.innerHTML = hosts.map(h => {
-      const on = pickedDevs.has(String(h.mac).toUpperCase());
+      const on = pickedDevs.has(macKey(h.mac));
       return '<button class="devchip" type="button" data-mac="' + escAttr(h.mac) + '"'
         + (on ? ' data-on="true"' : '') + (h.active ? '' : ' data-off="true"') + '>'
         + '<span class="nm">' + escHtml(h.name || h.mac) + '</span>'
