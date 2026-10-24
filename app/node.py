@@ -766,18 +766,18 @@ class Node:
                 if action == "add":
                     item = self._rule_payload(data)
                     if any(x["name"] == item["name"] for x in rules):
-                        raise st.SettingsError(f"已存在同名条目：{item['name']}")
+                        raise st.SettingsError(f"已存在同名规则：{item['name']}")
                     rules.append(item)
                 elif action == "update":
                     old = str(data.get("old_name") or "").strip()
                     idx = next((i for i, x in enumerate(rules)
                                 if x["name"] == old), None)
                     if idx is None:
-                        raise st.SettingsError(f"找不到要修改的条目：{old}")
+                        raise st.SettingsError(f"找不到要修改的规则：{old}")
                     item = self._rule_payload(data)
                     if item["name"] != old and any(
                             x["name"] == item["name"] for x in rules):
-                        raise st.SettingsError(f"已存在同名条目：{item['name']}")
+                        raise st.SettingsError(f"已存在同名规则：{item['name']}")
                     if item["name"] != old:
                         self._remove_entries_of(old)
                     rules[idx] = item
@@ -786,7 +786,7 @@ class Node:
                     idx = next((i for i, x in enumerate(rules)
                                 if x["name"] == name), None)
                     if idx is None:
-                        raise st.SettingsError(f"找不到要删除的条目：{name}")
+                        raise st.SettingsError(f"找不到要删除的规则：{name}")
                     self._remove_entries_of(name)
                     rules.pop(idx)
                 else:
@@ -835,7 +835,7 @@ class Node:
                     break
             if target is None:
                 return {"ok": False,
-                        "error": "白名单里找不到这条条目（可能已被删除）"}
+                        "error": "白名单里找不到这条记录（可能已被删除）"}
             try:
                 res = trustlist.delete(self.router, target)
             except RouterError as e:
@@ -884,7 +884,7 @@ class Node:
                     break
             if target is None:
                 return {"ok": False,
-                        "error": "白名单里找不到这条条目（可能已被删除）"}
+                        "error": "白名单里找不到这条记录（可能已被删除）"}
             try:
                 res = trustlist.update(self.router, target["ID"], name,
                                        local_ip,

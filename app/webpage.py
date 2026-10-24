@@ -272,7 +272,7 @@ a.lnk:hover .go{color:var(--accent-text)}
 .tbl tr:last-child td{border-bottom:0}
 .tbl tbody tr:hover{background:var(--accent-row)}
 .tbl .mono{font-size:11.5px;color:var(--text-5)}
-.tbl .acts{display:flex;gap:6px;justify-content:flex-end}
+.tbl .acts{display:flex;gap:6px;justify-content:flex-end;flex-wrap:wrap}
 .tbl-fixed{table-layout:fixed;min-width:900px}
 .tbl-fixed td{overflow:hidden}
 
@@ -1040,7 +1040,7 @@ html[data-theme="light"] .tpick-mask{background:rgba(30,34,56,.34)}
         </div>
 
         <div class="card">
-          <div class="ch"><svg class="i"><use href="#i-link"/></svg><span>路由器白名单条目</span>
+          <div class="ch"><svg class="i"><use href="#i-link"/></svg><span>路由器白名单</span>
             <span class="hint" id="entHint"></span></div>
           <div class="tblwrap">
             <table class="tbl tbl-fixed">
@@ -1752,7 +1752,9 @@ function renderCounts() {
   }
   const st = (S.state && S.state.status) || {};
   $('#cntDev').textContent = rows.length || '';
-  $('#cntFw').textContent = S.wl ? (S.wl.rules || []).length : '';
+  // 徽标 = 同步规则条数。开屏就要有：state 里就有规则清单，不用等防火墙页拉过
+  $('#cntFw').textContent = S.wl ? (S.wl.rules || []).length
+    : ((S.state && S.state.overview && (S.state.overview.rules || []).length) || '');
   $('#cntTask').textContent = S.tasks ? (S.tasks.tasks || []).length : '';
   $('#cntChan').textContent = S.notify ? (S.notify.channels || []).length : '';
   $('#devSub').textContent = st.last_error
@@ -1998,11 +2000,11 @@ function renderFirewall() {
       + '<button class="btn btn-sm btn-danger" data-a="del">' + svgI('trash') + '删除</button></div></td>';
     tr.querySelector('[data-a="edit"]').addEventListener('click', () => entryDialog(e, owned));
     tr.querySelector('[data-a="del"]').addEventListener('click', async () => {
-      if (!confirm('从路由器白名单里删除这条条目？')) return;
+      if (!confirm('从路由器白名单里删除这条记录？')) return;
       const r = await api('/api/router/whitelist/delete',
         { id: e.ID || e.id || '', name: nm }).catch(() => null);
       if (!r || !r.ok) return errToast(r);
-      toast('条目已删除', '', 'check');
+      toast('记录已删除', '', 'check');
       loadFirewall();
     });
     ent.appendChild(tr);
@@ -2172,11 +2174,11 @@ function entryDialog(e, owned) {
   const box = el('div', 'epick');
   const port = String(e.Port == null ? '-1' : e.Port);
   box.innerHTML = '<div class="th">' + svgI('link')
-    + '<span>编辑白名单条目</span>'
+    + '<span>编辑白名单记录</span>'
     + '<button class="btn btn-sm" type="button" data-a="x">关闭</button></div>'
     + '<div class="ebody">'
     + (owned ? '<div class="hp" style="margin-bottom:10px">这条由规则自动维护，'
-      + '手工改完可能马上被下一次同步改回去；要长期生效请改成不重名的条目，或去编辑那条规则。</div>' : '')
+      + '手工改完可能马上被下一次同步改回去；要长期生效请改成不重名的记录，或去编辑那条规则。</div>' : '')
     + '<div class="efld"><label>服务名称<em>*</em></label>'
     + '<input class="inp" id="eName" value="' + escAttr(e.Name || e.name || '') + '"></div>'
     + '<div class="efld"><label>本机 / 地址<em>*</em></label>'
@@ -2204,7 +2206,7 @@ function entryDialog(e, owned) {
     const r = await api('/api/router/whitelist/update', payload).catch(() => null);
     if (!r || !r.ok) return errToast(r);   // 校验文案由后端给，界面不显示内部参数
     close();
-    toast('条目已更新', '', 'check');
+    toast('记录已更新', '', 'check');
     loadFirewall();
   });
   mask.addEventListener('click', ev => { if (ev.target === mask) close(); });
@@ -2213,7 +2215,7 @@ function entryDialog(e, owned) {
   document.body.appendChild(mask);
 }
 async function removeRule(r) {
-  if (!confirm('删除规则「' + r.name + '」？它名下本程序维护的白名单条目会一起从路由器删掉。')) return;
+  if (!confirm('删除规则「' + r.name + '」？它名下本程序维护的白名单记录会一起从路由器删掉。')) return;
   const res = await api('/api/rules', { action: 'remove', name: r.name }).catch(() => null);
   if (!res || !res.ok) return errToast(res);
   toast('规则已删除', '', 'trash');
