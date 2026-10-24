@@ -3,7 +3,7 @@ FROM python:3.12-alpine
 
 LABEL org.opencontainers.image.title="HiRouterCenter" \
       org.opencontainers.image.description="华为路由器控制中心：IPv6 防火墙同步、设备管理与计划任务，含通知推送" \
-      org.opencontainers.image.version="1.2.3"
+      org.opencontainers.image.version="1.2.4"
 
 ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \

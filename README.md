@@ -406,7 +406,7 @@ RULES=[{"name":"NAS","port":16669,"mac":"00:11:22:AA:BB:CC"},
 
 ```
 ipv6sync/offline/dist/
-├── ipv6sync-1.2.3-amd64-image.tar     51.4 MB   x86_64 NAS（唯一产物）
+├── ipv6sync-1.2.4-amd64-image.tar     51.4 MB   x86_64 NAS（唯一产物）
 ├── docker-compose.offline.yml          无 build 段的 compose
 ├── .env.example                        环境变量模板
 ├── SHA256SUMS.txt                      tar 的 sha256
@@ -417,7 +417,7 @@ NAS 上只需要四步：
 
 ```bash
 uname -m                                    # 应该是 x86_64
-docker load -i ipv6sync-1.2.3-amd64-image.tar
+docker load -i ipv6sync-1.2.4-amd64-image.tar
 mkdir -p data && sudo chown -R 10001:10001 data
 docker compose -f docker-compose.offline.yml up -d   # 先在 yaml 的 environment 里改 ADMIN_PASSWORD
 ```
@@ -592,6 +592,16 @@ python -m unittest discover -s tests -t . -v
   设备卡上的「放行」按钮去掉，放行只在防火墙页按设备管理。
 - **计划任务**新增「定时唤醒」：设备从列表里选（最多 20 台），到点逐台间隔发 WOL。
 - 单测 **304 项**。
+
+### 1.2.4
+计划任务弹窗两处修复：
+
+- **「重复」选「自定义…」不再被弹回**：原来代码从「当前已选星期」反推模式，
+  新任务默认 7 天全选，反推永远是「每天」——表现为下拉一点自定义就弹回去、
+  星期选择框出不来。现在选自定义直接展开星期选择框，周一到周日随便勾。
+- **唤醒设备恢复复选框列表**：每行一台设备（复选框 + 名称 + MAC），
+  勾中行高亮；20 台上限与「至少选一台」校验不变。
+- 单测 **331 项**。
 
 ### 1.2.3
 界面细节与推送体验一轮打磨：
