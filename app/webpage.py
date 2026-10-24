@@ -166,6 +166,18 @@ tr:last-child td{border-bottom:none}
 .toast.ok{border-color:var(--ok);color:var(--ok)}
 .toast.err{border-color:var(--err);color:var(--err)}
 .mono{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:12px}
+/* 设备列表的 IPv6 列：一台设备可能有多个全局地址（SLAAC / 隐私临时 / DHCPv6），
+   一个地址一行，点一下复制。第一条加粗 —— 同步写白名单用的就是它。 */
+.v6list{display:flex;flex-direction:column;align-items:flex-start;gap:1px}
+.v6addr{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:12px;
+  background:none;border:none;border-radius:4px;padding:1px 4px;margin-left:-4px;
+  color:inherit;cursor:pointer;text-align:left;line-height:1.6;max-width:100%}
+.v6addr:hover{background:var(--accent-weak);color:var(--accent)}
+.v6addr:active{transform:translateY(1px)}
+.v6addr.first{font-weight:700}
+.v6addr.copied{color:var(--ok)}
+.v6addr.copied::after{content:" ✓";font-family:inherit}
+.v6none{color:var(--muted);font-size:12px}
 /* 设备列表页内的二级页签（在线/离线/黑名单/儿童上网） */
 .subtabs{display:flex;gap:2px;border-bottom:1px solid var(--line);margin-bottom:14px;flex-wrap:wrap}
 .subtab{background:transparent;border:none;border-bottom:2px solid transparent;border-radius:0;
@@ -1318,10 +1330,65 @@ tr.offrow td{opacity:.62}
       });
   }
 
+  // 复制到剪贴板。NAS 多为 http://192.168.x.x 访问，那里 navigator.clipboard 不可用
+  // （只有 https 或 localhost 才算安全上下文），所以必须留一条 execCommand 的老路。
+  function copyText(s) {
+    function fallback() {
+      var ta = document.createElement("textarea");
+      ta.value = s;
+      ta.setAttribute("readonly", "");
+      ta.style.position = "fixed";
+      ta.style.top = "-1000px";
+      ta.style.opacity = "0";
+      document.body.appendChild(ta);
+      ta.select();
+      var ok = false;
+      try { ok = document.execCommand("copy"); } catch (e) { ok = false; }
+      document.body.removeChild(ta);
+      return ok;
+    }
+    if (navigator.clipboard && window.isSecureContext) {
+      return navigator.clipboard.writeText(s).then(function () { return true; },
+        function () { return fallback(); });
+    }
+    return Promise.resolve(fallback());
+  }
+
+  function ipv6Cell(h) {
+    var addrs = h.ipv6 || [];
+    if (!addrs.length) {
+      var none = document.createElement("span");
+      none.className = "v6none";
+      none.textContent = "（无全局 IPv6）";
+      return none;
+    }
+    var box = document.createElement("div");
+    box.className = "v6list";
+    addrs.forEach(function (a, i) {
+      var b = document.createElement("button");
+      b.type = "button";
+      b.className = "v6addr" + (i === 0 ? " first" : "");
+      b.textContent = a;
+      b.title = i === 0
+        ? a + "（同步时写入白名单的就是这一条，点击复制）"
+        : a + "（点击复制）";
+      b.addEventListener("click", function () {
+        copyText(a).then(function (ok) {
+          if (!ok) { toast("复制失败，请手动选中地址", "err"); return; }
+          b.classList.add("copied");
+          setTimeout(function () { b.classList.remove("copied"); }, 1400);
+        });
+      });
+      box.appendChild(b);
+    });
+    return box;
+  }
+
   function wakeBtn(h) {
     var b = document.createElement("button");
     b.type = "button";
     b.className = "wbtn";
+    b.setAttribute("data-act", "1");
     b.appendChild(tkIcon("power"));
     var sp = document.createElement("span");
     sp.textContent = "唤醒";
@@ -1371,13 +1438,15 @@ tr.offrow td{opacity:.62}
         cells.forEach(function (v, i) {
           var td = document.createElement("td");
           if (v && v.nodeType === 1) {
-            td.appendChild(v);          // 单元格直接放元素（唤醒按钮）
-            td.className = "tkact";
+            td.appendChild(v);          // 单元格直接放元素（唤醒按钮、IPv6 地址列表）
+            // 只有标了 data-act 的才算「操作」格（手机上独占一行）；
+            // IPv6 那格也是元素，但它是内容，不能跟着变成操作行。
+            if (v.getAttribute("data-act") === "1") { td.classList.add("tkact"); }
           } else {
             td.textContent = (v === null || v === undefined || v === "") ? "—" : v;
           }
           td.setAttribute("data-label", (t._heads && t._heads[i]) || "");
-          if (monoCols.indexOf(i) >= 0) { td.className = "mono"; }
+          if (monoCols.indexOf(i) >= 0) { td.classList.add("mono"); }
           tr.appendChild(td);
         });
         t.appendChild(tr);
@@ -1407,9 +1476,10 @@ tr.offrow td{opacity:.62}
       }
 
       var t1 = mkTable(["MAC", "主机名", "IPv4", "当前 IPv6", "操作"]);
+      // 悬浮提示写在表头上，不占版面（这台机器的用户不喜欢界面上堆说明文字）
+      t1.rows[0].cells[3].title = "点地址即可复制；同步白名单时只用第一条（加粗的那条）";
       online.forEach(function (h) {
-        addRow(t1, [h.mac, h.name, h.ipv4,
-          (h.ipv6 || []).join(", ") || "（无全局 IPv6）", wakeBtn(h)], [0]);
+        addRow(t1, [h.mac, h.name, h.ipv4, ipv6Cell(h), wakeBtn(h)], [0]);
       });
       mount("devbox-online", t1, "当前没有在线设备。");
 
@@ -1430,9 +1500,9 @@ tr.offrow td{opacity:.62}
         "来自路由器 WiFi MAC 过滤黑名单，只读展示；增删请到路由器管理页操作。");
 
       var t4 = mkTable(["主机名", "MAC", "当前 IPv6", "状态", "操作"]);
+      t4.rows[0].cells[2].title = "点地址即可复制；同步白名单时只用第一条（加粗的那条）";
       kids.forEach(function (h) {
-        addRow(t4, [h.name, h.mac,
-          (h.ipv6 || []).join(", ") || "",
+        addRow(t4, [h.name, h.mac, ipv6Cell(h),
           h.active ? "在线" : ("离线" + (h.offline_at ? " · " + h.offline_at : "")),
           wakeBtn(h)], [1]);
       });

@@ -208,12 +208,24 @@ def host_candidates(host: dict) -> list[str]:
     cands: list[str] = []
     for item in host.get("Ipv6Addrs") or []:
         if isinstance(item, dict):
-            cands.append(item.get("Ipv6Addr") or "")
+            # 键名各固件不统一（Ipv6Addr / IPv6Address / Addr），已知的优先，
+            # 认不出来时再在这个小对象里兜底找一个像 IPv6 的字符串 ——
+            # 顺序不能变，第一项决定同步时写进白名单的是哪个地址。
+            v = (item.get("Ipv6Addr") or item.get("IPv6Address")
+                 or item.get("Addr") or "")
+            if not v:
+                for vv in item.values():
+                    if isinstance(vv, str) and ":" in vv and canon(vv):
+                        v = vv
+                        break
+            cands.append(v)
         elif isinstance(item, str):
             cands.append(item)
     # 单数字段 IPv6Address 实测常是链路本地（fe80::），is_usable 会把它滤掉；
     # 万一固件在这里放了全局地址，也没有理由不用它，所以照样收进来。
-    cands.append(host.get("IPv6Address") or "")
+    # 个别固件会把多个地址塞进这一个字段（空格/逗号分隔），一并拆开。
+    for part in re.split(r"[\s,]+", str(host.get("IPv6Address") or "")):
+        cands.append(part)
     out: list[str] = []
     for c in cands:
         if not is_usable(c):

@@ -211,6 +211,28 @@ class TestRouterDeviceList(unittest.TestCase):
                 "Ipv6Addrs": [{"Ipv6Addr": OLD_ADDR}, {"Ipv6Addr": "fe80::9"}]}
         self.assertEqual(discover.host_candidates(host), [OLD_ADDR])
 
+    def test_host_candidates_keeps_every_address_in_order(self):
+        """设备列表要显示全部全局地址，但同步只用第一条 —— 顺序必须原样保留。"""
+        host = {"Ipv6Addrs": [{"Ipv6Addr": OLD_ADDR},
+                              {"Ipv6Addr": "240e:3a4:48ff:6d10:aaaa:bbbb:cccc:dddd"},
+                              {"Ipv6Addr": "240e:3a4:48ff:6d10:1111:2222:3333:4444"}]}
+        got = discover.host_candidates(host)
+        self.assertEqual(got[0], OLD_ADDR)
+        self.assertEqual(len(got), 3)
+
+    def test_host_candidates_tolerates_unknown_key(self):
+        """固件把键名写成 Addr / IPv6Address 时也不能漏掉地址。"""
+        self.assertEqual(discover.host_candidates(
+            {"Ipv6Addrs": [{"Addr": OLD_ADDR}]}), [OLD_ADDR])
+        self.assertEqual(discover.host_candidates(
+            {"Ipv6Addrs": [{"Whatever": OLD_ADDR, "State": "1"}]}), [OLD_ADDR])
+
+    def test_host_candidates_splits_single_field(self):
+        """个别固件把多个地址塞进 IPv6Address 一个字段（逗号/空格分隔）。"""
+        host = {"IPv6Address": OLD_ADDR + ", 240e:3a4:48ff:6d10::99"}
+        self.assertEqual(discover.host_candidates(host),
+                         [OLD_ADDR, "240e:3a4:48ff:6d10::99"])
+
 
 class TestTrustlistCrud(unittest.TestCase):
     def test_add_then_upsert_unchanged(self):
