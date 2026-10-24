@@ -1368,6 +1368,11 @@ function escAttr(s) { return escHtml(s).replace(/"/g, '&quot;'); }
    路由器 HostInfo 是 XX:XX:… 带冒号形式 —— 直接 toUpperCase 比较永远不相等
    （1.2.2 前「编辑规则定位不到设备 / 表格里显示不出设备名」就是这条）。 */
 function macKey(s) { return String(s || '').replace(/[^0-9a-f]/gi, '').toUpperCase(); }
+/* 「全部端口」的三种写法：固件存 -1，路由器页面上留空保存后可能是空串或 0 */
+function allPort(v) {
+  const s = String(v == null ? '' : v).trim();
+  return s === '' || s === '-1' || s === '0' || s === 'all' || s === 'ALL';
+}
 function toast(title, sub, icon) {
   const box = $('#toasts');
   const t = el('div', 'toast', '<svg class="i"><use href="#i-' + (icon || 'check') + '"/></svg>'
@@ -1994,7 +1999,7 @@ function renderFirewall() {
         : '<span class="badge badge-plain" style="margin-left:6px">手工</span>') + '</td>'
       + '<td class="mono" style="font-size:11.5px">' + escHtml(e.RemoteIp || e.remote_ip || '::/0') + '</td>'
       + '<td class="mono" style="font-size:11.5px">' + escHtml(e.LocalIp || e.local_ip || '—') + '</td>'
-      + '<td>' + escHtml(String(e.Port == null || e.Port === '-1' ? '全部' : e.Port)) + '</td>'
+      + '<td>' + escHtml(allPort(e.Port) ? '全部' : String(e.Port)) + '</td>'
       + '<td><div class="acts">'
       + '<button class="btn btn-sm" data-a="edit">' + svgI('edit') + '编辑</button>'
       + '<button class="btn btn-sm btn-danger" data-a="del">' + svgI('trash') + '删除</button></div></td>';
@@ -2123,7 +2128,7 @@ function ruleDialog(src) {
     + '<div class="efld"><label>服务名称<em>*</em></label>'
     + '<input class="inp" id="rName" value="' + escAttr(cur.name) + '" placeholder="例如 NAS"></div>'
     + '<div class="efld"><label>放行端口</label>'
-    + '<input class="inp" id="rPort" value="' + escAttr(cur.port) + '" placeholder="-1 表示全部端口"></div>'
+    + '<input class="inp" id="rPort" value="' + escAttr(cur.port) + '" placeholder="留空或 -1 = 全部端口"></div>'
     + '</div>'
     + '<div class="efld"><label>允许来源</label>'
     + '<input class="inp" id="rRemote" value="' + escAttr(cur.remote_ip) + '" placeholder="::/0 表示不限制">'
@@ -2186,7 +2191,7 @@ function entryDialog(e, owned) {
     + '<div class="hp">对外的 IPv6 地址</div></div>'
     + '<div class="egrid2">'
     + '<div class="efld"><label>放行端口</label>'
-    + '<input class="inp" id="ePort" value="' + escAttr(port) + '" placeholder="-1 表示全部端口"></div>'
+    + '<input class="inp" id="ePort" value="' + escAttr(port) + '" placeholder="留空或 -1 = 全部端口"></div>'
     + '<div class="efld"><label>允许来源</label>'
     + '<input class="inp" id="eRemote" value="' + escAttr(e.RemoteIp || e.remote_ip || '::/0') + '"></div>'
     + '</div></div><div class="efoot">'

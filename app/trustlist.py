@@ -55,7 +55,10 @@ def set_enabled(r, on: bool) -> dict:
 
 
 def _norm_port(port) -> int:
-    if port in (None, "", "all", "ALL", "any"):
+    # 「全部端口」在固件里有几种写法：-1（本程序写入的写法）、空串、
+    # 0（路由器自带页面上端口留空保存后有可能存成 0）—— 都归一成 -1，
+    # 否则会比成「不一致」而每轮重写一次白名单。
+    if port in (None, "", "all", "ALL", "any", 0, "0"):
         return ALL_PORTS
     return int(port)
 

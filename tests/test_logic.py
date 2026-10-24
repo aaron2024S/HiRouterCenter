@@ -286,6 +286,19 @@ class TestTrustlistCrud(unittest.TestCase):
         trustlist.add(r, "NAS2", OLD_ADDR, "all", "::/0")
         self.assertEqual(r.entries[1]["Port"], -1)
 
+    def test_all_ports_spellings_are_one_thing(self):
+        """-1 / 空串 / 0 / all 都是「全部端口」，互相比较必须相等。
+
+        否则路由器自带页面上端口留空保存出来的条目（可能存成空串或 0）
+        会被判成「和规则不一致」，白白每轮重写一次。
+        """
+        for spelling in (None, "", "0", 0, "all", "ALL", "any", "-1", -1):
+            self.assertEqual(trustlist._norm_port(spelling), trustlist.ALL_PORTS,
+                             repr(spelling))
+        self.assertTrue(trustlist.same_port("", -1))
+        self.assertTrue(trustlist.same_port(0, -1))
+        self.assertFalse(trustlist.same_port(0, 5000))
+
     def test_max_entries_guard(self):
         r = FakeRouter(entries=[{"Name": f"e{i}", "ID": f"id{i}"}
                                 for i in range(trustlist.MAX_ENTRIES)])
