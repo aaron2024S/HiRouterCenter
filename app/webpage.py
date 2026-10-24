@@ -945,7 +945,7 @@ html[data-theme="light"] .tpick-mask{background:rgba(30,34,56,.34)}
         <button class="ni" data-page="notify">
           <svg class="i"><use href="#i-bell"/></svg><span>通知</span><span class="cnt" id="cntChan"></span></button>
         <button class="ni" data-page="router">
-          <svg class="i"><use href="#i-knob"/></svg><span>路由器设置</span></button>
+          <svg class="i"><use href="#i-knob"/></svg><span>设置</span></button>
         <button class="ni" data-page="about">
           <svg class="i"><use href="#i-info"/></svg><span>关于</span></button>
       </nav>
