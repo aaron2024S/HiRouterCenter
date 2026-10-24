@@ -233,8 +233,9 @@ def send_all(cfg, ctx: dict) -> list[dict]:
 def send_test(cfg, channel: dict) -> tuple[bool, str]:
     """给单条渠道发一条测试消息（不看总开关、不看事件订阅）。"""
     import time
+    from .notify_events import icon_of      # 延迟导入，避开模块环
     ctx = {
-        "title": "测试通知",
+        "title": icon_of("test") + " 测试通知",
         "text": "这是一条来自 HiRouterCenter 的测试消息。\n"
                 "收到它说明这个渠道配好了。",
         "level": "normal",

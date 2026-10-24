@@ -62,6 +62,35 @@ EVENTS: tuple = (
 EVENT_BY_CODE = {e[0]: e for e in EVENTS}
 EVENT_GROUPS = tuple(dict.fromkeys(e[1] for e in EVENTS))
 
+# 语气 → 标题图标（与 dockhelm 同一套）：推送标题一眼看出好坏，不用点开读正文。
+# 纯文本渠道（钉钉/企业微信这类）不剥离，图标随标题一起发；邮件主题由
+# EmailMessage 自动做 RFC2047 编码，emoji 也没问题。
+TONE_ICON = {"success": "✅", "failed": "❌", "warning": "⚠️", "info": "ℹ️"}
+
+# 事件 → 语气。写进 EVENT 表的 code 就得在这里配语气，漏配的按 info 处理。
+EVENT_TONE = {
+    "fw_add":          "success",   # 加白成功
+    "fw_update":       "success",   # 地址更新成功
+    "fw_remove":       "info",      # 移除是正常操作，不算坏事
+    "fw_off":          "warning",   # 防火墙被关闭：状态异常但不是程序故障
+    "fw_fail":         "failed",
+    "dev_online":      "success",
+    "dev_offline":     "warning",
+    "dev_new":         "info",
+    "dev_blocked":     "warning",
+    "task_ok":         "success",
+    "task_fail":       "failed",
+    "task_miss":       "warning",
+    "sys_unreachable": "failed",
+    "sys_login_fail":  "failed",
+    "test":            "info",
+}
+
+
+def icon_of(code: str) -> str:
+    """事件在推送标题前的图标；陌生代码一律 ℹ️。"""
+    return TONE_ICON.get(EVENT_TONE.get(code), TONE_ICON["info"])
+
 
 def events_table(cfg) -> list[dict]:
     """给界面用的事件清单（带当前开关状态）。"""
@@ -300,7 +329,7 @@ def _dispatch(cfg, code, text, subject, title, force) -> list[dict]:
         log.debug("去重窗口内，跳过通知：%s / %s", code, subject)
         return []
 
-    head = title or title_of(code)
+    head = (icon_of(code) + " " + (title or title_of(code))).strip()
     ctx = {
         "title": head,
         "text": text or head,

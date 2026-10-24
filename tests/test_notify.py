@@ -473,7 +473,7 @@ class DispatchGateTest(unittest.TestCase):
         with mock.patch.object(notify, "_post", return_value=(True, "")) as p:
             ne.dispatch(cfg, "dev_online", "NAS 上线了", subject="nas")
         payload = json.loads(p.call_args[0][1].decode("utf-8"))
-        self.assertTrue(payload["text"]["content"].startswith("设备已上线"))
+        self.assertTrue(payload["text"]["content"].startswith("✅ 设备已上线"))
 
 
 class HistoryTest(unittest.TestCase):
@@ -493,9 +493,21 @@ class HistoryTest(unittest.TestCase):
             ne.dispatch(self.cfg, "fw_add", "NAS 已加入白名单")
         rows = ne.read_history(self.cfg)
         self.assertEqual(len(rows), 1)
-        self.assertEqual(rows[0]["title"], "已加入 IPv6 白名单")
+        self.assertEqual(rows[0]["title"], "✅ 已加入 IPv6 白名单")
         self.assertTrue(rows[0]["ok"])
         self.assertIn("NAS", rows[0]["text"])
+
+    def test_title_has_tone_icon(self):
+        """推送标题带语气图标（与 dockhelm 同一套：✅❌⚠️ℹ️）。"""
+        self.assertEqual(ne.icon_of("fw_add"), "✅")
+        self.assertEqual(ne.icon_of("fw_fail"), "❌")
+        self.assertEqual(ne.icon_of("fw_off"), "⚠️")
+        self.assertEqual(ne.icon_of("fw_remove"), "ℹ️")
+        self.assertEqual(ne.icon_of("陌生代码"), "ℹ️")
+        with mock.patch.object(notify, "_post", return_value=(True, "")):
+            ne.dispatch(self.cfg, "fw_fail", "同步失败")
+        rows = ne.read_history(self.cfg)
+        self.assertTrue(rows[-1]["title"].startswith("❌ "))
 
     def test_failure_recorded(self):
         with mock.patch.object(notify, "_post", return_value=(False, "nope")):
@@ -577,7 +589,7 @@ class SyncNotifyIntegrationTest(_LocalNetStub, unittest.TestCase):
         p = self._tick(self._cfg())
         self.assertEqual(p.call_count, 1)
         ctx = p.call_args[0][1]
-        self.assertEqual(ctx["title"], "已加入 IPv6 白名单")
+        self.assertEqual(ctx["title"], "✅ 已加入 IPv6 白名单")
         self.assertIn("NAS", ctx["text"])
         self.assertIn(OLD_ADDR, ctx["text"])
 
