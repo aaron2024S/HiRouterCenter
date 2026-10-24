@@ -213,17 +213,45 @@ tr.offrow td{opacity:.62}
 .tsw.on{background:var(--ok)}
 .tsw.on::after{left:17px}
 .tsw:disabled{opacity:.6;cursor:wait}
-.tkbtns{display:flex;gap:6px;flex-wrap:nowrap;align-items:center}
-.tkbtns .wbtn{display:inline-flex;align-items:center;gap:5px;padding:3px 9px}
+.tkbtns{display:flex;gap:5px;flex-wrap:nowrap;align-items:center}
+.tkbtns .wbtn{display:inline-flex;align-items:center;gap:4px;padding:3px 7px}
 .tkbtns .wbtn svg{flex:none;opacity:.85}
 .tkbtns .danger{color:var(--err);border-color:var(--btn-line)}
 .tkbtns .danger:hover{border-color:var(--err);background:transparent}
 .swmini{display:inline-flex;align-items:center;gap:6px;font-size:12px;color:var(--muted)}
 .tkoff td{opacity:.55}
 .tkoff td.tktog{opacity:1}
-.tkbad{color:var(--err);font-size:12px;white-space:normal;max-width:320px;min-width:200px}
-.tkok{color:var(--ok);font-size:12px;white-space:normal;max-width:320px;min-width:200px}
-.tkwait{color:var(--muted);font-size:12px;white-space:normal;max-width:320px;min-width:200px}
+/* 计划任务表：固定列宽，「上次结果」吃掉剩余空间并在格内折行 ——
+   columns 加起来是定值，表格永远等于容器宽，桌面端不会再长出横向滚动条。
+   （td 上的 max-width 在 table 布局里是被忽略的，靠 span 的 max-width 拦不住，
+     只能由 table-layout:fixed + 各列显式宽度来管。）
+   只在够宽的桌面生效：手机上表格会变成卡片（display:block），
+   1000px 以下的窄窗口则沿用外层横滑 —— 那边固定列宽加起来放不下，
+   硬套 fixed 会把「上次结果」压成一条竖线。 */
+@media (min-width:1000px){
+  table.tktbl{table-layout:fixed;width:100%}
+  table.tktbl th,table.tktbl td{white-space:normal;overflow-wrap:break-word}
+  /* 操作列不能跟着折行 —— 否则「立即执行」会断成「立即执/行」 */
+  table.tktbl td.tkact,table.tktbl td.tkact *{white-space:nowrap}
+  /* 「上次结果」里可能有很长且无空格的串（旧版本回显过的连接路径），
+     必须能在任意位置断，否则一个词就把列撑破 */
+  table.tktbl td.tkres{overflow-wrap:anywhere}
+  /* 列宽由列说了算，格子里的 span 不许再撑出去 */
+  table.tktbl td.tkres span{max-width:100%}
+  table.tktbl th:nth-child(1){width:76px}    /* 任务 */
+  table.tktbl th:nth-child(2){width:112px}   /* 类型 */
+  table.tktbl th:nth-child(3){width:150px}   /* 执行时间：「每天 08:30 → 穿墙模式」单行放得下 */
+  table.tktbl th:nth-child(4){width:92px}    /* 下次 */
+  table.tktbl th:nth-child(6){width:52px}    /* 启用 */
+  table.tktbl th:nth-child(7){width:216px}   /* 操作：三个按钮单行放得下 */
+}
+/* 「上次结果」那一格：inline-block + 上限宽度，让长消息在格内折行而不是把列撑宽
+   （inline 元素上 max-width 不生效，所以必须 inline-block） */
+.tkbad,.tkok,.tkwait{display:inline-block;max-width:260px;overflow-wrap:anywhere;
+  vertical-align:top;font-size:12px;white-space:normal}
+.tkbad{color:var(--err)}
+.tkok{color:var(--ok)}
+.tkwait{color:var(--muted)}
 
 /* ---------- 手机端（≤640px） ---------- */
 @media (max-width:640px){
@@ -1475,6 +1503,7 @@ tr.offrow td{opacity:.62}
   }
   function tkCellState(k) {
     var td = document.createElement("td");
+    td.className = "tkres";
     var s = document.createElement("span");
     if (k.last_ok === true) {
       s.className = "tkok";
@@ -1539,7 +1568,7 @@ tr.offrow td{opacity:.62}
     } else {
       var HEADS = ["任务", "类型", "执行时间", "下次", "上次结果", "启用", "操作"];
       var t = document.createElement("table");
-      t.className = "rmob";            // 手机上转成卡片式
+      t.className = "rmob tktbl";      // 手机上转成卡片式；桌面用固定列宽（不出横向滚动）
       var hr = document.createElement("tr");
       HEADS.forEach(function (h) {
         var th = document.createElement("th");
