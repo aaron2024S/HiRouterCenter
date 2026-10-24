@@ -201,12 +201,24 @@ tr.offrow td{opacity:.62}
 .tkwk button{min-width:38px;padding:6px 0;font-size:12.5px}
 .tkwk button.on{background:var(--accent);border-color:var(--accent);color:#fff;font-weight:600}
 .tkwhen{color:var(--muted);font-size:12px}
-.tkbtns{display:flex;gap:6px;flex-wrap:nowrap}
-.tkbtns .wbtn{padding:3px 10px}
+/* 计划任务页：工具行里按钮与右侧说明文字按中线对齐 */
+.tkbar{align-items:center}
+/* 启停开关（比设置页那个小一号） */
+.tsw{position:relative;width:34px;height:19px;border-radius:10px;background:#c0c4ca;
+  border:none;cursor:pointer;padding:0;flex:none;transition:background .15s}
+.tsw::after{content:"";position:absolute;top:2px;left:2px;width:15px;height:15px;
+  border-radius:50%;background:#fff;box-shadow:0 1px 2px rgba(0,0,0,.25);transition:left .15s}
+.tsw.on{background:var(--ok)}
+.tsw.on::after{left:17px}
+.tsw:disabled{opacity:.6;cursor:wait}
+.tkbtns{display:flex;gap:6px;flex-wrap:nowrap;align-items:center}
+.tkbtns .wbtn{display:inline-flex;align-items:center;gap:5px;padding:3px 9px}
+.tkbtns .wbtn svg{flex:none;opacity:.85}
 .tkbtns .danger{color:var(--err);border-color:var(--btn-line)}
 .tkbtns .danger:hover{border-color:var(--err);background:transparent}
 .swmini{display:inline-flex;align-items:center;gap:6px;font-size:12px;color:var(--muted)}
 .tkoff td{opacity:.55}
+.tkoff td.tktog{opacity:1}
 .tkbad{color:var(--err);font-size:12px;white-space:normal;max-width:320px;min-width:200px}
 .tkok{color:var(--ok);font-size:12px;white-space:normal;max-width:320px;min-width:200px}
 .tkwait{color:var(--muted);font-size:12px;white-space:normal;max-width:320px;min-width:200px}
@@ -311,7 +323,7 @@ tr.offrow td{opacity:.62}
         style="vertical-align:-2px" aria-hidden="true"><path fill="none"
         stroke="currentColor" stroke-width="1.8" stroke-linecap="round"
         d="M13.5 8a5.5 5.5 0 1 1-1.6-3.9M13.5 1.8v2.7h-2.7"/></svg> 刷新</button></h2>
-      <div class="toolbar" style="margin-bottom:10px">
+      <div class="toolbar tkbar" style="margin-bottom:10px">
         <button id="btnTaskAdd" class="primary">＋ 添加任务</button>
         <span class="desc" style="margin:0" id="taskMeta"></span>
       </div>
@@ -1370,11 +1382,42 @@ tr.offrow td{opacity:.62}
     td.textContent = (v === null || v === undefined || v === "") ? "—" : v;
     return td;
   }
-  function tkCellBtn(text, cls, fn) {
+  // 行内操作图标（14×14 视框，跟随 currentColor）
+  var TK_ICONS = {
+    play: { d: "M5 3.4 11.6 8 5 12.6Z", fill: true },
+    edit: { d: "M9.3 2.9 11 4.6M3.4 10.7l.4-2 5.7-5.7 1.6 1.6-5.7 5.7-2 .4Z" },
+    del: { d: "M2.9 4.3h8.2M6 4.3V2.9h2v1.4M4.1 4.3l.5 7.2h4.8l.5-7.2" }
+  };
+  function tkIcon(name) {
+    var ic = TK_ICONS[name], ns = "http://www.w3.org/2000/svg";
+    var s = document.createElementNS(ns, "svg");
+    s.setAttribute("viewBox", "0 0 14 14");
+    s.setAttribute("width", "13");
+    s.setAttribute("height", "13");
+    s.setAttribute("aria-hidden", "true");
+    var p = document.createElementNS(ns, "path");
+    p.setAttribute("d", ic.d);
+    if (ic.fill) {
+      p.setAttribute("fill", "currentColor");
+      p.setAttribute("stroke", "none");
+    } else {
+      p.setAttribute("fill", "none");
+      p.setAttribute("stroke", "currentColor");
+      p.setAttribute("stroke-width", "1.5");
+      p.setAttribute("stroke-linecap", "round");
+      p.setAttribute("stroke-linejoin", "round");
+    }
+    s.appendChild(p);
+    return s;
+  }
+  function tkCellBtn(icon, text, cls, fn) {
     var b = document.createElement("button");
     b.type = "button";
     b.className = cls;
-    b.textContent = text;
+    if (icon) { b.appendChild(tkIcon(icon)); }
+    var sp = document.createElement("span");
+    sp.textContent = text;
+    b.appendChild(sp);
     b.addEventListener("click", fn);
     return b;
   }
@@ -1397,14 +1440,29 @@ tr.offrow td{opacity:.62}
     td.appendChild(s);
     return td;
   }
+  function tkCellToggle(k) {
+    var td = document.createElement("td");
+    td.className = "tktog";
+    var sw = document.createElement("button");
+    sw.type = "button";
+    sw.className = "tsw" + (k.enabled ? " on" : "");
+    sw.title = k.enabled ? "已启用，点击停用" : "已停用，点击启用";
+    sw.setAttribute("aria-label", sw.title);
+    sw.setAttribute("aria-pressed", k.enabled ? "true" : "false");
+    sw.addEventListener("click", function () {
+      sw.disabled = true;
+      tkToggle(k);
+    });
+    td.appendChild(sw);
+    return td;
+  }
   function tkCellBtns(k) {
     var td = document.createElement("td");
     var w = document.createElement("div");
     w.className = "tkbtns";
-    w.appendChild(tkCellBtn(k.enabled ? "停用" : "启用", "wbtn", function () { tkToggle(k); }));
-    w.appendChild(tkCellBtn("立即执行", "wbtn", function () { tkRun(k); }));
-    w.appendChild(tkCellBtn("编辑", "wbtn", function () { tkOpen(k); }));
-    w.appendChild(tkCellBtn("删除", "wbtn danger", function () { tkDelete(k); }));
+    w.appendChild(tkCellBtn("play", "立即执行", "wbtn", function () { tkRun(k); }));
+    w.appendChild(tkCellBtn("edit", "编辑", "wbtn", function () { tkOpen(k); }));
+    w.appendChild(tkCellBtn("del", "删除", "wbtn danger", function () { tkDelete(k); }));
     td.appendChild(w);
     return td;
   }
@@ -1429,7 +1487,7 @@ tr.offrow td{opacity:.62}
     } else {
       var t = document.createElement("table");
       var hr = document.createElement("tr");
-      ["任务", "类型", "执行时间", "下次", "上次结果", "操作"].forEach(function (h) {
+      ["任务", "类型", "执行时间", "下次", "上次结果", "启用", "操作"].forEach(function (h) {
         var th = document.createElement("th");
         th.textContent = h;
         hr.appendChild(th);
@@ -1443,6 +1501,7 @@ tr.offrow td{opacity:.62}
         tr.appendChild(tkCellText(k.when));
         tr.appendChild(tkCellText(k.next_at));
         tr.appendChild(tkCellState(k));
+        tr.appendChild(tkCellToggle(k));
         tr.appendChild(tkCellBtns(k));
         t.appendChild(tr);
       });
@@ -1548,10 +1607,17 @@ tr.offrow td{opacity:.62}
     api("/api/tasks/toggle", {
       method: "POST", body: JSON.stringify({ id: k.id, enabled: !k.enabled })
     }).then(function (j) {
-      if (!j.ok) { toast("操作失败：" + (j.error || ""), "err"); return; }
+      if (!j.ok) {
+        toast("操作失败：" + (j.error || ""), "err");
+        loadTasks();          // 失败也重拉一次，把开关拨回服务端的真实状态
+        return;
+      }
       toast(k.enabled ? "已停用「" + k.name + "」" : "已启用「" + k.name + "」", "ok");
       loadTasks();
-    }).catch(function (e) { toast("请求失败：" + e, "err"); });
+    }).catch(function (e) {
+      toast("请求失败：" + e, "err");
+      loadTasks();
+    });
   }
 
   function tkRun(k) {
