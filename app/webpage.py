@@ -2029,8 +2029,9 @@ function renderEvents() {
   if (!ev) return;
   const q = ($('#evQ').value || '').trim().toLowerCase();
   const kind = $('#evKind').value || '';
-  $('#evMax').innerHTML = [100, 200, 500, 1000, 2000, 5000].map(n =>
-    '<option value="' + n + '"' + (n === (ev.max || 100) ? ' selected' : '') + '>' + n + '</option>').join('');
+  // 同步记录只是排查用的流水，上限不设那么大：默认 50，最多 200
+  $('#evMax').innerHTML = [10, 20, 50, 100, 200].map(n =>
+    '<option value="' + n + '"' + (n === (ev.max || 50) ? ' selected' : '') + '>' + n + '</option>').join('');
   const all = (ev.events || []).slice().reverse();
   const rows = all.filter(e => {
     if (kind && e.action !== kind) return false;

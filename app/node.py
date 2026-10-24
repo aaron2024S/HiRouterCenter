@@ -351,8 +351,8 @@ class Node:
             n = int(value)
         except (TypeError, ValueError):
             raise st.SettingsError("保留条数必须是数字")
-        if not 10 <= n <= 5000:
-            raise st.SettingsError("保留条数必须在 10 ~ 5000 之间")
+        if not 10 <= n <= 200:
+            raise st.SettingsError("保留条数必须在 10 ~ 200 之间")
         with self._lock:
             merged = dict(self.overlay)
             merged["LOG_MAX"] = n

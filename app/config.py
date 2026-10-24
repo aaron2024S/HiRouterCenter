@@ -164,7 +164,7 @@ class Config:
     state_file: str = "/data/state.json"
     # 同步记录保留条数（/data/events.jsonl 超出丢弃最旧）。
     # 不在设置表单里露出 —— 只在「同步记录」页的工具行里调。
-    events_max: int = 100
+    events_max: int = 50
 
     @property
     def base_url(self) -> str:
@@ -274,7 +274,7 @@ def load_config(argv: list[str] | None = None) -> Config:
         web_session_ttl=_env_int("WEB_SESSION_TTL", 12 * 3600),
         settings_file=settings_file,
         state_file=_env("STATE_FILE", "") or _default_state_file(settings_file),
-        events_max=max(10, min(5000, _env_int("LOG_MAX", 100))),
+        events_max=max(10, min(200, _env_int("LOG_MAX", 50))),
     )
 
     # 通知渠道的字段合法性由网页设置层校验（URL 格式 / 机器人 ID），这里不再拦截

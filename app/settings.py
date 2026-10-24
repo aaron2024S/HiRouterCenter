@@ -110,8 +110,9 @@ FIELDS: tuple = (
           attr="log_level", choices=LOG_LEVELS),
     # 同步记录保留条数：设置表单里不露出（hidden），在「同步记录」页的工具行里调，
     # 避免同一项出现在两个页面造成两处真相。
-    Field("LOG_MAX", "同步记录保留条数", G_BEHAVIOR, "int", "100",
-          attr="events_max", min=10, max=5000, hidden=True),
+    # 上限按用户要求收到 200：同步记录只是排查用，堆到几千条既看不过来也白占空间
+    Field("LOG_MAX", "同步记录保留条数", G_BEHAVIOR, "int", "50",
+          attr="events_max", min=10, max=200, hidden=True),
     # ---- 通知设置（三渠道互相独立，启用几个就同时推几个） ----
     Field("NOTIFY_TITLE", "通知标题", G_NOTIFY, "str", "IPv6 白名单已更新",
           attr="notify_title", hidden=True,
@@ -385,6 +386,26 @@ def validate_overlay(data: dict, strict: bool = True) -> dict:
     return out
 
 
+def _clamp_legacy_max(data: dict) -> dict:
+    """旧设置文件里的 LOG_MAX 可能比现在的上限大（原来是 5000）。
+
+    非严格校验会**整项跳过**、静默回到默认值 —— 用户不知道自己填的上限被丢了。
+    这里改成夹到当前上限（200）并留一条日志：既不丢用户的意图方向，也不会让
+    这一项在界面上消失。
+    """
+    raw = data.get("LOG_MAX")
+    if raw is None:
+        return data
+    try:
+        n = int(str(raw).strip())
+    except (TypeError, ValueError):
+        return data
+    if n > 200:
+        log.info("设置文件里的 LOG_MAX=%s 超过当前上限 200，已收敛为 200", n)
+        data["LOG_MAX"] = 200
+    return data
+
+
 # --------------------------------------------------------------------------
 # 落盘
 # --------------------------------------------------------------------------
@@ -409,7 +430,8 @@ def load_overlay(path: str | None = None) -> dict:
         return {}
     try:
         # 非严格模式：未知键（旧版本残留）与个别坏值只跳过，不让整份文件失效
-        return validate_overlay(_migrate_legacy_rules(data), strict=False)
+        return validate_overlay(_clamp_legacy_max(_migrate_legacy_rules(data)),
+                                strict=False)
     except SettingsError as e:
         log.warning("设置文件 %s 里有不合法项（%s），忽略整份文件", path, e)
         return {}

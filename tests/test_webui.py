@@ -5,6 +5,7 @@
 不联网、不碰真路由器、不需要 Docker：
     python -m unittest discover -s tests -v
 """
+import io
 import json
 import os
 import socket
@@ -1415,6 +1416,25 @@ class RulesApiTest(EnvSandbox):
             node.set_events_max("abc")
         with self.assertRaises(st.SettingsError):
             node.set_events_max(99999)
+        # 上限收到 200：300 同样要被拒（同步记录只是排查用，不堆几千条）
+        with self.assertRaises(st.SettingsError):
+            node.set_events_max(300)
+
+    def test_events_max_default_50_upper_200(self):
+        """保留条数：默认 50、上限 200，且旧文件里更大的值被夹到 200 而不是被丢。"""
+        from app import config as cfg
+        self.assertEqual(cfg.load_config([]).events_max, 50)
+        f = st.BY_KEY["LOG_MAX"]
+        self.assertEqual((f.min, f.max, f.default), (10, 200, "50"))
+
+        d = tempfile.mkdtemp()
+        p = os.path.join(d, "settings.json")
+        with io.open(p, "w", encoding="utf-8") as fh:
+            fh.write('{"LOG_MAX": "5000"}')
+        self.assertEqual(st.load_overlay(p), {"LOG_MAX": 200})
+        with io.open(p, "w", encoding="utf-8") as fh:
+            fh.write('{"LOG_MAX": "120"}')
+        self.assertEqual(st.load_overlay(p), {"LOG_MAX": 120})
 
 
 if __name__ == "__main__":
