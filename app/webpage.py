@@ -272,7 +272,7 @@ a.lnk:hover .go{color:var(--accent-text)}
 .tbl tr:last-child td{border-bottom:0}
 .tbl tbody tr:hover{background:var(--accent-row)}
 .tbl .mono{font-size:11.5px;color:var(--text-5)}
-.tbl .acts{display:flex;gap:6px;justify-content:flex-end;flex-wrap:wrap}
+.tbl .acts{display:flex;gap:6px;justify-content:flex-end;flex-wrap:nowrap;white-space:nowrap}
 .tbl-fixed{table-layout:fixed;min-width:900px}
 .tbl-fixed td{overflow:hidden}
 
@@ -1028,11 +1028,11 @@ html[data-theme="light"] .tpick-mask{background:rgba(30,34,56,.34)}
               <thead><tr>
                 <th style="width:150px">服务名称</th>
                 <th style="width:170px">设备</th>
-                <th style="width:200px">当前地址</th>
+                <th style="width:190px">当前地址</th>
                 <th style="width:100px">放行端口</th>
-                <th style="width:130px">允许来源</th>
+                <th style="width:120px">允许来源</th>
                 <th style="width:120px">当前状态</th>
-                <th style="width:110px"></th>
+                <th style="width:170px"></th>
               </tr></thead>
               <tbody id="ruleRows"></tbody>
             </table>
@@ -1045,11 +1045,11 @@ html[data-theme="light"] .tpick-mask{background:rgba(30,34,56,.34)}
           <div class="tblwrap">
             <table class="tbl tbl-fixed">
               <thead><tr>
-                <th style="width:180px">服务名称</th>
-                <th style="width:170px">CIDR/Remote IP</th>
-                <th>本地 IP</th>
-                <th style="width:90px">通信端口</th>
-                <th style="width:150px">操作</th>
+                <th style="width:18%">服务名称</th>
+                <th style="width:20%">CIDR/Remote IP</th>
+                <th style="width:33%">本地 IP</th>
+                <th style="width:10%">通信端口</th>
+                <th style="width:19%">操作</th>
               </tr></thead>
               <tbody id="entRows"></tbody>
             </table>
