@@ -1035,8 +1035,9 @@ class NodeHostsTest(EnvSandbox):
     """Node.hosts() 的数据整形逻辑（用假路由器，不联网）。"""
 
     class FakeR:
-        def __init__(self, wlan=None):
+        def __init__(self, wlan=None, entries=None):
             self.logged_in = True
+            self.entries = entries if entries is not None else []
             self.wlan = wlan if wlan is not None else [
                 {"WifiModulename": "WIFI-2.4G",
                  "BMACAddresses": [{"MACAddress": "04:F1:28:1A:01:73",
@@ -1065,6 +1066,8 @@ class NodeHostsTest(EnvSandbox):
                 ]
             if name == "ntwk/wlanfilterenhance":
                 return self.wlan
+            if name == "ip6firewall_trustlist":
+                return self.entries
             raise AssertionError(name)
 
     def make(self, **kw) -> Node:
@@ -1086,6 +1089,35 @@ class NodeHostsTest(EnvSandbox):
         self.assertFalse(off["active"], "Active='0'（字符串）不能误判为在线")
         self.assertEqual(off["offline_at"], "2026-09-26 15:42:10")
         self.assertFalse(by["AA:00:00:00:00:03"]["kids"], "MacFilterID 为空不算儿童上网")
+
+    def test_hosts_carries_whitelist_entries(self):
+        """设备页要判断「这台设备当前地址有没有被放行」，条目顺手带过去。
+
+        只带名字 / 地址 / 端口，**不带 ID 之类内部字段**（界面不显示内部参数）。
+        """
+        res = self.make(entries=[{"ID": "InternetGatewayDevice.X_FireWall.Ipv6.Trustlist.1.",
+                                  "Name": "小爱音响", "LocalIp": "240e:3a4::a1", "Port": 16669},
+                                 {"Name": "手工", "LocalIp": "240e:3a4::bb", "Port": -1}]).hosts()
+        self.assertEqual(len(res["entries"]), 2)
+        self.assertEqual(res["entries"][0]["name"], "小爱音响")
+        self.assertEqual(res["entries"][0]["local_ip"], "240e:3a4::a1")
+        self.assertEqual(res["entries"][1]["port"], -1)
+        self.assertNotIn("ID", res["entries"][0])
+
+    def test_entries_read_failure_does_not_break_hosts(self):
+        """读白名单条目失败（路由器抽风）不能把整个设备列表搞挂。"""
+        node = self.make()
+        orig = node.router.get
+
+        def get(name, params=None):
+            if name == "ip6firewall_trustlist":
+                raise RuntimeError("设备拒绝")
+            return orig(name, params)
+        node.router.get = get
+        res = node.hosts()
+        self.assertTrue(res["ok"])
+        self.assertEqual(res["entries"], [])
+        self.assertEqual(len(res["hosts"]), 3)
 
     def test_blacklist_merged_across_bands(self):
         res = self.make().hosts()

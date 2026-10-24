@@ -1632,6 +1632,28 @@ function ruleOf(mac) {
   const m = macKey(mac);
   return rules.find(r => macKey(r.mac) === m) || null;
 }
+/* IPv6 地址归一成「8 段、无前导零」再比：同一个地址有
+   240e:3a5:4801:1600::a1 和 240e:3a5:4801:1600:0:0:0:a1 两种写法，直接比字符串会漏。 */
+function canonV6(s) {
+  let t = String(s == null ? '' : s).trim().toLowerCase().split('%')[0].split('/')[0];
+  if (!t) return '';
+  const z = t.indexOf('::');
+  const norm = a => a.map(x => String(parseInt(x === '' ? '0' : x, 16) || 0));
+  if (z < 0) return norm(t.split(':')).join(':');
+  const head = t.slice(0, z) ? t.slice(0, z).split(':') : [];
+  const tail = t.slice(z + 2) ? t.slice(z + 2).split(':') : [];
+  const mid = new Array(Math.max(0, 8 - head.length - tail.length)).fill('0');
+  return norm(head.concat(mid, tail)).join(':');
+}
+/* 路由器白名单里**现在**有没有放行这台设备的某个地址（含手工加的条目）。
+   只看地址不看名字：手工加的条目名字跟设备名没关系，对不上。 */
+function manualHit(d) {
+  const ents = (S.hosts && S.hosts.entries) || [];
+  if (!ents.length) return null;
+  const addrs = (d.ipv6 || []).map(canonV6).filter(Boolean);
+  if (!addrs.length) return null;
+  return ents.find(e => addrs.indexOf(canonV6(e.local_ip)) >= 0) || null;
+}
 function renderDevices() {
   const grid = $('#devGrid');
   const h = S.hosts;
@@ -1710,10 +1732,17 @@ function renderDevices() {
     card.appendChild(v6);
 
     const r = ruleOf(d.mac);
+    const hit = r ? null : manualHit(d);
     const foot = el('div', 'dev-foot');
-    foot.innerHTML = r
-      ? '<span class="fw on">' + svgI('fw6') + '已放行 <b>' + escHtml(r.port) + '</b></span>'
-      : '<span class="fw">' + svgI('fw6') + '未放行</span>';
+    const badge = r
+      ? '<span class="fw on" title="有绑定这台设备的同步规则，地址变化会自动跟进">'
+        + svgI('fw6') + '已放行 <b>' + escHtml(r.port) + '</b></span>'
+      : hit
+        ? '<span class="fw on" title="路由器白名单里有这条设备当前地址的条目（不是本程序维护的，地址变了不会自动跟进）">'
+          + svgI('fw6') + '已放行 <b>手工</b></span>'
+        : '<span class="fw" title="没有绑定这台设备的同步规则，路由器白名单里也没有它当前地址的条目">'
+          + svgI('fw6') + '未放行</span>';
+    foot.innerHTML = badge;
     const wb = el('button', 'btn btn-sm', svgI('power') + '唤醒');
     wb.type = 'button';
     if (d.active) { wb.disabled = true; wb.title = '设备在线，不需要唤醒'; }

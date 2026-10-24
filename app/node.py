@@ -599,9 +599,21 @@ class Node:
                 bl_error = ""
             except RouterError as e:
                 blacklist, bl_error = [], str(e)
+            # 白名单实读条目（只带名字 / 地址 / 端口）：设备卡上要判断
+            # 「这台设备当前地址有没有被放行」—— 手工加在路由器上的条目也算。
+            # 读失败不拖累设备列表本身，给空列表（设备卡就回到「未放行」）。
+            try:
+                entries = [{"name": e.get("Name") or "",
+                            "local_ip": e.get("LocalIp") or e.get("Localip") or "",
+                            "port": e.get("Port")}
+                           for e in trustlist.list_entries(self.router)]
+            except Exception as e:                # noqa: BLE001 — 设备列表不该被它拖垮
+                log.warning("读白名单条目失败，设备页放行状态降级：%s", e)
+                entries = []
             return {"ok": True, "hosts": rows,
                     "blacklist": blacklist, "blacklist_error": bl_error,
                     "lan_prefixes": discover.lan_prefixes(self.router),
+                    "entries": entries,
                     # 规则列表顺手带上（纯内存，不额外请求路由器）：
                     # 设备卡上「已放行 xxx」就靠它和设备 MAC 对上
                     "rules": [{"name": r.name, "mac": r.mac or "",
