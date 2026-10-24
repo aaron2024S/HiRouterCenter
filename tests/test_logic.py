@@ -1395,7 +1395,7 @@ class TestTaskModel(unittest.TestCase):
                          ["3C:7C:3F:11:22:33", "A0:B1:C2:D3:E4:F5"])
         self.assertEqual(devs[0]["name"], "书房台式机")
         self.assertEqual(devs[1]["ipv4"], "")
-        self.assertEqual(tk.describe(t), "每天 07:30 → 唤醒 2 台")
+        self.assertEqual(tk.describe(t), "每天 07:30 → 唤醒 2 台设备")
 
     def test_clean_wake_rejects_empty(self):
         for devs in (None, [], [{"mac": ""}], [{"mac": "zz:zz"}]):

@@ -262,7 +262,7 @@ def describe(task: dict) -> str:
         when += " → " + POWER_MODES.get(
             (task.get("params") or {}).get("power_mode"), "?")
     elif task.get("kind") == "wake":
-        when += " → 唤醒 %d 台" % len((task.get("params") or {}).get("devices") or [])
+        when += " → 唤醒 %d 台设备" % len((task.get("params") or {}).get("devices") or [])
     return when
 
 

@@ -266,7 +266,8 @@ tr.offrow td{opacity:.62}
   table.tktbl td.tkres span{max-width:100%}
   table.tktbl th:nth-child(1){width:84px}    /* 任务：5 个字的名字也能单行放下 */
   table.tktbl th:nth-child(2){width:112px}   /* 类型 */
-  table.tktbl th:nth-child(3){width:150px}   /* 执行时间：「每天 08:30 → 穿墙模式」单行放得下 */
+  /* 执行时间：「每天 07:30 → 唤醒 2 台设备」实测 152px 文本 + 18 padding */
+  table.tktbl th:nth-child(3){width:176px}
   table.tktbl th:nth-child(4){width:92px}    /* 下次 */
   table.tktbl th:nth-child(6){width:52px}    /* 启用 */
   table.tktbl th:nth-child(7){width:216px}   /* 操作：三个按钮单行放得下 */
@@ -1541,8 +1542,7 @@ tr.offrow td{opacity:.62}
     redial: "到点让路由器重新拨号，等于「我要上网」页那个「重新连接」按钮。断网十来秒。",
     wifi_power: "到点切换 Wi-Fi 功率档位。切到「睡眠模式」会明显缩小覆盖范围，适合夜里。",
     channel: "到点让路由器自动挑一个更空闲的信道。",
-    wake: "到点给选中的设备发网络唤醒包（WOL）。设备需要开启网络唤醒；" +
-          "只负责发出去，不判断有没有开机成功。"
+    wake: "到点给选中的设备发网络唤醒包（WOL）。设备需要开启网络唤醒。"
   };
 
   function tkCellText(v) {
