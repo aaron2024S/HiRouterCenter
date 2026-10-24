@@ -80,9 +80,10 @@ h1 .logo{width:24px;height:24px;border-radius:6px;display:block;flex:none}
 header.top .spacer{flex:1}
 .who{color:var(--muted);font-size:12.5px}
 .pills{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:16px}
-.tabs{display:flex;gap:4px;margin-bottom:18px;border-bottom:1px solid var(--line)}
+.tabs{display:flex;gap:4px;margin-bottom:18px;border-bottom:1px solid var(--line);flex-wrap:wrap}
 .tab{background:transparent;border:none;border-bottom:2px solid transparent;
-  border-radius:0;padding:9px 18px;font-size:13.5px;color:var(--muted);cursor:pointer}
+  border-radius:0;padding:9px 18px;font-size:13.5px;color:var(--muted);cursor:pointer;
+  flex:none;white-space:nowrap}
 .tab:hover{color:var(--accent)}
 .tab.active{color:var(--accent);border-bottom-color:var(--accent);font-weight:600}
 .pill{display:inline-flex;align-items:center;gap:6px;background:var(--card);
@@ -177,8 +178,9 @@ tr:last-child td{border-bottom:none}
 tr.offrow td{opacity:.62}
 .devnote{color:var(--muted);font-size:12px;margin:10px 0 0}
 /* 设备列表每行的「唤醒」小按钮 */
-.wbtn{padding:3px 11px;font-size:12px;line-height:1.5;border-radius:6px;
-  border:1px solid var(--btn-line);background:transparent;color:var(--accent)}
+.wbtn{display:inline-flex;align-items:center;gap:5px;padding:3px 11px;font-size:12px;line-height:1.5;
+  border-radius:6px;border:1px solid var(--btn-line);background:transparent;color:var(--accent)}
+.wbtn svg{flex:none;opacity:.9}
 .wbtn:hover{border-color:var(--accent);background:var(--accent-weak)}
 .wbtn:disabled{opacity:.5;cursor:default}
 /* 白名单徽标 + 设备选址弹窗 */
@@ -201,8 +203,8 @@ tr.offrow td{opacity:.62}
 .tkwk button{min-width:38px;padding:6px 0;font-size:12.5px}
 .tkwk button.on{background:var(--accent);border-color:var(--accent);color:#fff;font-weight:600}
 .tkwhen{color:var(--muted);font-size:12px}
-/* 计划任务页：工具行里按钮与右侧说明文字按中线对齐 */
-.tkbar{align-items:center}
+/* 计划任务：标题下那行「共 N 个 · 容器时间」 */
+.taskmeta{color:var(--muted);font-size:12.5px;margin:2px 0 12px}
 /* 启停开关（比设置页那个小一号） */
 .tsw{position:relative;width:34px;height:19px;border-radius:10px;background:#c0c4ca;
   border:none;cursor:pointer;padding:0;flex:none;transition:background .15s}
@@ -222,6 +224,51 @@ tr.offrow td{opacity:.62}
 .tkbad{color:var(--err);font-size:12px;white-space:normal;max-width:320px;min-width:200px}
 .tkok{color:var(--ok);font-size:12px;white-space:normal;max-width:320px;min-width:200px}
 .tkwait{color:var(--muted);font-size:12px;white-space:normal;max-width:320px;min-width:200px}
+
+/* ---------- 手机端（≤640px） ---------- */
+@media (max-width:640px){
+  #app{padding:14px 12px 92px}
+  .card{padding:14px 14px;border-radius:10px}
+  header.top{gap:8px;margin-bottom:12px}
+  header.top h1{font-size:15.5px}
+  header.top .who{display:none}
+  .pills{gap:6px;margin-bottom:12px}
+  .pill{font-size:12px;padding:4px 10px}
+  /* 一级页签：换行铺满，不再挤成一列竖排字 */
+  .tabs{gap:0 2px;margin-bottom:14px}
+  .tab{padding:8px 11px;font-size:13px}
+  .subtabs{margin-bottom:10px}
+  .toolbar{margin-bottom:10px}
+  /* 表格改卡片：每行一块，字段名靠左、值靠右，操作按钮独占底部一行。
+     只有 .wmob（能转卡片的表格）才取消横滑，其余表格（同步记录等）照旧横滑 */
+  .tblwrap.wmob{overflow:visible}
+  table.rmob{display:block;min-width:0;font-size:13px}
+  table.rmob tr:first-child{display:none}
+  table.rmob tr{display:block;border:1px solid var(--line);border-radius:10px;
+    padding:8px 12px;margin-bottom:9px;background:var(--bg)}
+  table.rmob td{display:flex;align-items:baseline;gap:10px;border:none;padding:3px 0;
+    white-space:normal;word-break:break-all;min-width:0;max-width:none}
+  table.rmob td::before{content:attr(data-label);flex:none;width:74px;
+    color:var(--muted);font-size:12px}
+  table.rmob td:first-child{font-weight:600;padding-top:2px}
+  table.rmob td:first-child::before{content:"";width:0}
+  table.rmob td.tkact{border-top:1px dashed var(--line);margin-top:6px;padding-top:9px;
+    justify-content:flex-start}
+  table.rmob td.tkact::before{content:"";width:0}
+  table.rmob tr.offrow td:not(.tkact){opacity:.62}
+  /* 行内按钮/开关在手机上放大一点，方便点 */
+  .tkbtns{gap:8px}
+  .tkbtns .wbtn{padding:6px 10px;font-size:12.5px}
+  .tsw{width:40px;height:22px;border-radius:11px}
+  .tsw::after{width:18px;height:18px;border-radius:50%}
+  .tsw.on::after{left:20px}
+  .tkbad,.tkok,.tkwait{min-width:0;max-width:none}
+  .foot{padding:10px 12px}
+  .foot .hint{font-size:12px}
+  #toast{right:12px;left:12px;bottom:78px;align-items:stretch}
+  .toast{max-width:none}
+  .dlg{padding:16px}
+}
 </style>
 </head>
 <body>
@@ -319,11 +366,8 @@ tr.offrow td{opacity:.62}
 
   <div id="tab-tasks" class="hide">
     <div class="card">
-      <h2>计划任务</h2>
-      <div class="toolbar tkbar" style="margin-bottom:10px">
-        <button id="btnTaskAdd" class="primary">＋ 添加任务</button>
-        <span class="desc" style="margin:0" id="taskMeta"></span>
-      </div>
+      <h2>计划任务<button id="btnTaskAdd" class="primary hbtn">＋ 添加任务</button></h2>
+      <p class="taskmeta" id="taskMeta"></p>
       <div id="taskBox"></div>
     </div>
   </div><!-- /tab-tasks -->
@@ -1223,20 +1267,22 @@ tr.offrow td{opacity:.62}
   // 所以这里绝不判断「成功/失败」，免得设备正常启动时反而吓用户一跳。
   function wake(h, btn) {
     if (btn.disabled) { return; }
+    var lab = btn.querySelector("span");
     btn.disabled = true;
     api("/api/wol", { method: "POST", body: JSON.stringify({ mac: h.mac }) })
       .then(function (j) {
         toast(j.ok ? ("已向 " + h.mac + " 发出唤醒包")
                    : ("唤醒失败：" + (j.error || "")),
               j.ok ? "ok" : "err");
-        if (j.ok) { btn.textContent = "已发送"; }
+        if (j.ok && lab) { lab.textContent = "已发送"; }
       })
       .catch(function (e) { toast("请求失败：" + e, "err"); })
       .then(function () {
         // 与后端 10 秒节流对齐，冷却期内不让连点（换页签重新渲染后按钮会重新可用，
         // 那时由后端限频兜底）
         setTimeout(function () {
-          btn.disabled = false; btn.textContent = "唤醒";
+          btn.disabled = false;
+          if (lab) { lab.textContent = "唤醒"; }
         }, 10000);
       });
   }
@@ -1245,7 +1291,10 @@ tr.offrow td{opacity:.62}
     var b = document.createElement("button");
     b.type = "button";
     b.className = "wbtn";
-    b.textContent = "唤醒";
+    b.appendChild(tkIcon("power"));
+    var sp = document.createElement("span");
+    sp.textContent = "唤醒";
+    b.appendChild(sp);
     b.title = "向 " + h.mac + " 发送网络唤醒包（该设备需开启 WOL）";
     b.addEventListener("click", function () { wake(h, b); });
     return b;
@@ -1276,6 +1325,8 @@ tr.offrow td{opacity:.62}
       // 所有动态文本一律 textContent 写入（主机名是不可信输入，防 XSS）
       function mkTable(heads) {
         var t = document.createElement("table");
+        t.className = "rmob";          // 手机上转成卡片式（见 CSS 的 @media）
+        t._heads = heads;
         var hr = document.createElement("tr");
         heads.forEach(function (h) {
           var th = document.createElement("th"); th.textContent = h; hr.appendChild(th);
@@ -1290,9 +1341,11 @@ tr.offrow td{opacity:.62}
           var td = document.createElement("td");
           if (v && v.nodeType === 1) {
             td.appendChild(v);          // 单元格直接放元素（唤醒按钮）
+            td.className = "tkact";
           } else {
             td.textContent = (v === null || v === undefined || v === "") ? "—" : v;
           }
+          td.setAttribute("data-label", (t._heads && t._heads[i]) || "");
           if (monoCols.indexOf(i) >= 0) { td.className = "mono"; }
           tr.appendChild(td);
         });
@@ -1305,7 +1358,7 @@ tr.offrow td{opacity:.62}
         box.textContent = "";
         if (t.rows.length > 1) {
           var sc = document.createElement("div");
-          sc.className = "tblwrap";
+          sc.className = "tblwrap" + (t.className === "rmob" ? " wmob" : "");
           sc.appendChild(t);
           box.appendChild(sc);
         } else {
@@ -1381,7 +1434,8 @@ tr.offrow td{opacity:.62}
   var TK_ICONS = {
     play: { d: "M5 3.4 11.6 8 5 12.6Z", fill: true },
     edit: { d: "M9.3 2.9 11 4.6M3.4 10.7l.4-2 5.7-5.7 1.6 1.6-5.7 5.7-2 .4Z" },
-    del: { d: "M2.9 4.3h8.2M6 4.3V2.9h2v1.4M4.1 4.3l.5 7.2h4.8l.5-7.2" }
+    del: { d: "M2.9 4.3h8.2M6 4.3V2.9h2v1.4M4.1 4.3l.5 7.2h4.8l.5-7.2" },
+    power: { d: "M7 1.6v4.9M4.2 3.5a4.35 4.35 0 1 0 5.6 0" }
   };
   function tkIcon(name) {
     var ic = TK_ICONS[name], ns = "http://www.w3.org/2000/svg";
@@ -1480,9 +1534,11 @@ tr.offrow td{opacity:.62}
         "Wi-Fi 功率模式切换、信道优化。";
       box.appendChild(p);
     } else {
+      var HEADS = ["任务", "类型", "执行时间", "下次", "上次结果", "启用", "操作"];
       var t = document.createElement("table");
+      t.className = "rmob";            // 手机上转成卡片式
       var hr = document.createElement("tr");
-      ["任务", "类型", "执行时间", "下次", "上次结果", "启用", "操作"].forEach(function (h) {
+      HEADS.forEach(function (h) {
         var th = document.createElement("th");
         th.textContent = h;
         hr.appendChild(th);
@@ -1491,17 +1547,18 @@ tr.offrow td{opacity:.62}
       tasks.forEach(function (k) {
         var tr = document.createElement("tr");
         if (!k.enabled) { tr.className = "tkoff"; }
-        tr.appendChild(tkCellText(k.name));
-        tr.appendChild(tkCellText(k.kind_label || k.kind));
-        tr.appendChild(tkCellText(k.when));
-        tr.appendChild(tkCellText(k.next_at));
-        tr.appendChild(tkCellState(k));
-        tr.appendChild(tkCellToggle(k));
-        tr.appendChild(tkCellBtns(k));
+        var cells = [tkCellText(k.name), tkCellText(k.kind_label || k.kind),
+                     tkCellText(k.when), tkCellText(k.next_at),
+                     tkCellState(k), tkCellToggle(k), tkCellBtns(k)];
+        cells.forEach(function (td, i) {
+          td.setAttribute("data-label", HEADS[i]);
+          if (i === cells.length - 1) { td.classList.add("tkact"); }
+          tr.appendChild(td);
+        });
         t.appendChild(tr);
       });
       var sc = document.createElement("div");
-      sc.className = "tblwrap";
+      sc.className = "tblwrap wmob";
       sc.appendChild(t);
       box.appendChild(sc);
     }
