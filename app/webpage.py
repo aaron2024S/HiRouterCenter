@@ -1465,6 +1465,7 @@ $('#lgForm').addEventListener('submit', async e => {
       $('#lgPass').value = '';
       S.authed = true;
       await boot();
+      startPolling();          // 登录进来的也要开 5 秒轮询（原来只在启动已登录那条路开）
     } else {
       err.textContent = j.error || '登录失败';
     }
@@ -1697,7 +1698,7 @@ function renderDevices() {
     if (d.kids) tags.innerHTML += '<span class="badge badge-accent">儿童上网</span>';
     if (tags.innerHTML) card.appendChild(tags);
 
-    /* IPv4（点击复制）+ 离线设备的最后在线时间 —— 改版时丢掉的两个字段 */
+    /* IPv4（点击复制）—— 改版时丢掉的字段 */
     const meta = el('div', 'dev-meta');
     if (d.ipv4) {
       const b4 = el('button', 'v6', svgI('copy') + '<span>' + escHtml(d.ipv4) + '</span>');
@@ -1712,9 +1713,6 @@ function renderDevices() {
         } else toast('复制失败', '长按地址手动复制', 'alert');
       });
       meta.appendChild(b4);
-    }
-    if (!d.active && d.offline_at) {
-      meta.appendChild(el('div', 'laston', svgI('history') + '最后在线 ' + escHtml(d.offline_at)));
     }
     if (meta.children.length) card.appendChild(meta);
 
@@ -1737,6 +1735,13 @@ function renderDevices() {
       v6.appendChild(b);
     });
     card.appendChild(v6);
+
+    /* 离线设备的最后在线时间：放在 IPv6 下面一行（用户指定的顺序：IPv4 / IPv6 / 最后在线） */
+    if (!d.active && d.offline_at) {
+      const laston = el('div', 'dev-meta');
+      laston.appendChild(el('div', 'laston', svgI('history') + '最后在线 ' + escHtml(d.offline_at)));
+      card.appendChild(laston);
+    }
 
     const r = ruleOf(d.mac);
     const hit = r ? null : manualHit(d);
@@ -3121,6 +3126,11 @@ $('#devQ').addEventListener('input', e => { S.devQuery = e.target.value; renderD
 $('#devType').addEventListener('change', e => { S.devType = e.target.value; renderDevices(); });
 
 /* 轻量轮询：只拉内存里的状态（不打路由器） */
+let _pollTimer = null;
+function startPolling() {
+  if (_pollTimer) return;                 // 两条登录路径都调这里，只开一份
+  _pollTimer = setInterval(refreshState, 5000);
+}
 async function refreshState() {
   const st = await api('/api/state').catch(() => null);
   if (!st) return;
@@ -3153,7 +3163,7 @@ async function boot() {
       S.authed = true;
       hideGate();
       await boot();
-      setInterval(refreshState, 5000);
+      startPolling();
     } else showGate();
   } catch (e) { showGate(); }
 })();
