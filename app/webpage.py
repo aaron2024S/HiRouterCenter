@@ -519,6 +519,18 @@ html[data-theme="light"] .tpick-mask{background:rgba(30,34,56,.34)}
 .devrow[data-on="true"] .mc{color:var(--accent-text);opacity:.8}
 .efld > span{margin-bottom:5px;font-size:11.5px;color:var(--text-4)}
 
+/* 任务弹窗：控件按 App「添加规则」规格（46px 高 / 14px 字） */
+.epick .inp,.epick .sel{min-height:46px;font-size:14px;padding:10px 13px;border-radius:10px}
+.epick .btn:disabled{opacity:.45;cursor:not-allowed}
+/* 解析结果行：绿色=合法，红色=报错 */
+#tParse{display:block;margin-bottom:0;font-size:12.5px;color:var(--text-4);min-height:17px}
+#tParse[data-ok="true"]{color:var(--accent-text)}
+#tParse[data-ok="false"]{color:var(--err-text)}
+/* 启用勾选行 */
+.ckline{display:flex;align-items:center;gap:8px;margin-bottom:0;font-size:13px;
+  color:var(--text-2);cursor:pointer;user-select:none}
+.ckline input[type="checkbox"]{width:15px;height:15px;flex:none;accent-color:var(--accent);cursor:pointer}
+
 /* 收起侧栏（桌面端） */
 .shell.collapsed .sidebar{width:62px;padding-left:8px;padding-right:8px}
 .shell.collapsed .sidebar .ni span:not(.cnt){display:none}
@@ -2287,7 +2299,6 @@ async function loadTasks() {
   renderTasks();
   renderCounts();
 }
-const WEEK = ['一', '二', '三', '四', '五', '六', '日'];
 function renderTasks() {
   const t = S.tasks;
   if (!t) return;
@@ -2348,15 +2359,56 @@ function renderTasks() {
     tb.innerHTML = '<tr><td colspan="7" class="sub">还没有计划任务。点右上角「添加任务」。</td></tr>';
   }
 }
+/* ---- 计划任务弹窗：重复 = 每天 / 每小时 / 工作日 / 每月 1 日 / 自定义 cron ---- */
+const SCHED_MODES = [
+  ["daily", "每天"],
+  ["hourly", "每小时"],
+  ["wd", "工作日（周一至周五）"],
+  ["monthly", "每月 1 日"],
+  ["cron", "自定义 cron"],
+];
+
+// 旧「自定义星期」任务（days 不是每天/工作日）编辑时转成 cron 表达式，不再有第四种存法
+function daysToCronExpr(at, days) {
+  const seg = String(at || "03:30").split(":");
+  const h = Number(seg[0]) || 0, mi = Number(seg[1]) || 0;
+  const dows = (days || []).map(d => d === 7 ? 0 : d).sort((a, b) => a - b);
+  return mi + " " + h + " * * " + (dows.join(",") || "*");
+}
+
+function schedFromTask(t) {
+  const s = { mode: "daily", at: t.at || "03:30", min: 0, expr: "" };
+  if (t.cron) {
+    const c = String(t.cron).trim();
+    let m = c.match(/^(\d{1,2}) \* \* \* \*$/);
+    if (m) { s.mode = "hourly"; s.min = Number(m[1]); s.expr = c; return s; }
+    m = c.match(/^(\d{1,2}) (\d{1,2}) 1 \* \*$/);
+    if (m) {
+      s.mode = "monthly";
+      s.at = String(m[2]).padStart(2, "0") + ":" + String(m[1]).padStart(2, "0");
+      s.expr = c; return s;
+    }
+    s.mode = "cron"; s.expr = c; return s;
+  }
+  const days = (t.days && t.days.length) ? t.days.slice().sort((a, b) => a - b) : [1, 2, 3, 4, 5, 6, 7];
+  if (days.join(",") === "1,2,3,4,5") s.mode = "wd";
+  else if (days.join(",") !== "1,2,3,4,5,6,7") {
+    s.mode = "cron";
+    s.expr = daysToCronExpr(s.at, days);
+  }
+  return s;
+}
+
 function taskDialog(src) {
   const isNew = !src;
   const t = S.tasks || {};
   const kinds = t.kinds || {};
   const pms = t.power_modes || {};
-  const cur = src || { kind: 'reboot', at: '03:30', days: [1, 2, 3, 4, 5, 6, 7], enabled: true, params: {} };
-  const mask = el('div', 'tpick-mask');
-  const box = el('div', 'epick');
-  box.innerHTML = '<div class="th">' + svgI('cal') + '<span>' + (isNew ? '添加任务' : '编辑任务')
+  const cur = src || { kind: "reboot", enabled: true, params: {} };
+  const sched = schedFromTask(cur);
+  const mask = el("div", "tpick-mask");
+  const box = el("div", "epick");
+  box.innerHTML = '<div class="th">' + svgI("cal") + "<span>" + (isNew ? "添加任务" : "编辑任务")
     + '</span><button class="btn btn-sm" type="button" data-a="x">关闭</button></div>'
     + '<div class="ebody">'
     + '<div class="egrid2">'
@@ -2367,14 +2419,12 @@ function taskDialog(src) {
       + (k === cur.kind ? ' selected' : '') + '>' + escHtml(v) + '</option>').join('')
     + '</select></div></div>'
     + '<div class="egrid2">'
-    + '<div class="efld"><label>执行时间</label><input class="inp" type="time" id="tAt" value="'
-    + escAttr(cur.at || '03:30') + '"></div>'
-    + '<div class="efld"><label>重复</label><select class="sel" id="tDays">'
-    + '<option value="all">每天</option><option value="wd">周一至周五</option>'
-    + '<option value="custom">自定义…</option></select></div></div>'
-    + '<div class="efld hide" id="tDaysBox"><label>选择星期</label><div class="wdays" id="tDaysPick">'
-    + WEEK.map((w, i) => '<button class="wday" type="button" data-d="' + (i + 1) + '">' + w + '</button>').join('')
-    + '</div></div>'
+    + '<div class="efld"><label id="tTimeLabel">执行时间</label><span id="tTimeHost"></span></div>'
+    + '<div class="efld"><label>重复</label><select class="sel" id="tSched">'
+    + SCHED_MODES.map(([v, n]) => '<option value="' + v + '"'
+      + (v === sched.mode ? ' selected' : '') + '>' + escHtml(n) + '</option>').join('')
+    + '</select></div></div>'
+    + '<div class="efld" id="tParseRow"><span id="tParse"></span></div>'
     + '<div class="efld hide" id="tPowBox"><label>功率模式</label><select class="sel" id="tPow">'
     + Object.entries(pms).map(([k, v]) => '<option value="' + k + '"'
       + (String(k) === String((cur.params || {}).power_mode) ? ' selected' : '') + '>' + escHtml(v) + '</option>').join('')
@@ -2382,53 +2432,113 @@ function taskDialog(src) {
     + '<div class="efld hide" id="tDevBox"><label>唤醒哪几台设备<em>*</em></label>'
     + '<div class="hp" style="margin:0 0 8px">从设备列表里选，最多 20 台；多台之间会自动间隔一秒发。</div>'
     + '<div class="devpick" id="tDevPick"></div></div>'
+    + '<div class="efld"><label class="ckline"><input type="checkbox" id="tEnabled"'
+    + (cur.enabled === false ? '' : ' checked') + '><span>'
+    + (isNew ? "创建后立即启用" : "启用这个任务") + "</span></label></div>"
     + '</div><div class="efoot">'
     + '<button class="btn" type="button" data-a="x">取消</button>'
     + '<button class="btn btn-primary" type="button" data-a="save">'
-    + (isNew ? '添加任务' : '保存修改') + '</button></div>';
+    + (isNew ? "添加任务" : "保存修改") + "</button></div>";
 
-  const kindSel = box.querySelector('#tKind');
-  const daysSel = box.querySelector('#tDays');
-  const powBox = box.querySelector('#tPowBox');
-  const devBox = box.querySelector('#tDevBox');
-  const daysBox = box.querySelector('#tDaysBox');
-  const pick = box.querySelector('#tDaysPick');
-  const chosen = new Set(cur.days && cur.days.length ? cur.days : [1, 2, 3, 4, 5, 6, 7]);
+  const kindSel = box.querySelector("#tKind");
+  const schedSel = box.querySelector("#tSched");
+  const powBox = box.querySelector("#tPowBox");
+  const devBox = box.querySelector("#tDevBox");
+  const timeHost = box.querySelector("#tTimeHost");
+  const timeLabel = box.querySelector("#tTimeLabel");
+  const parseEl = box.querySelector("#tParse");
+  const saveBtn = box.querySelector('[data-a="save"]');
 
-  function syncDaysUi() {
-    const d = chosen.size === 7 ? 'all' : ([...chosen].sort().join(',') === '1,2,3,4,5' ? 'wd' : 'custom');
-    daysSel.value = d;
-    daysBox.classList.toggle('hide', d !== 'custom');
-    pick.querySelectorAll('.wday').forEach(b => {
-      b.dataset.on = chosen.has(Number(b.dataset.d)) ? 'true' : 'false';
-    });
-  }
-  pick.querySelectorAll('.wday').forEach(b => b.addEventListener('click', () => {
-    const d = Number(b.dataset.d);
-    if (chosen.has(d)) chosen.delete(d); else chosen.add(d);
-    syncDaysUi();
-  }));
-  daysSel.addEventListener('change', () => {
-    if (daysSel.value === 'all') { chosen.clear(); [1, 2, 3, 4, 5, 6, 7].forEach(x => chosen.add(x)); }
-    else if (daysSel.value === 'wd') { chosen.clear(); [1, 2, 3, 4, 5].forEach(x => chosen.add(x)); }
-    if (daysSel.value === 'custom') {
-      // 直接进自定义模式。不能从 chosen 反推：新任务默认 7 天全选，
-      // 反推会算出「每天」把下拉弹回去，星期选择框永远出不来。
-      daysBox.classList.remove('hide');
-      pick.querySelectorAll('.wday').forEach(b => {
-        b.dataset.on = chosen.has(Number(b.dataset.d)) ? 'true' : 'false';
+  function buildTimeCtl() {
+    if (sched.mode === "hourly") {
+      timeLabel.textContent = "每小时第几分钟";
+      timeHost.innerHTML = '<input class="inp" type="number" id="tMin" min="0" max="59" value="'
+        + sched.min + '">';
+      timeHost.querySelector("#tMin").addEventListener("input", e => {
+        let v = Math.floor(Number(e.target.value));
+        if (Number.isNaN(v)) v = 0;
+        sched.min = Math.min(59, Math.max(0, v));
+        schedPreview();
       });
-    } else syncDaysUi();
-  });
+    } else if (sched.mode === "cron") {
+      timeLabel.textContent = "cron 表达式";
+      timeHost.innerHTML = '<input class="inp" type="text" id="tCron" spellcheck="false"'
+        + ' placeholder="分 时 日 月 周，如 30 4 * * 1-5" value="' + escAttr(sched.expr) + '">';
+      timeHost.querySelector("#tCron").addEventListener("input", e => {
+        sched.expr = e.target.value;
+        checkCron();
+      });
+    } else {
+      timeLabel.textContent = "执行时间";
+      timeHost.innerHTML = '<input class="inp" type="time" id="tAt" value="'
+        + escAttr(sched.at) + '">';
+      timeHost.querySelector("#tAt").addEventListener("input", e => {
+        sched.at = e.target.value;
+        schedPreview();
+      });
+    }
+  }
+
+  function cronText(mode, s) {
+    if (mode === "hourly") return s.min + " * * * *";
+    if (mode === "monthly") {
+      const seg = String(s.at || "03:30").split(":");
+      return (Number(seg[1]) || 0) + " " + (Number(seg[0]) || 0) + " 1 * *";
+    }
+    return "";
+  }
+
+  function schedPreview() {
+    if (sched.mode === "cron") return;               // 由 checkCron 负责
+    let text = "";
+    if (sched.mode === "daily") text = "每天 " + (sched.at || "--:--");
+    else if (sched.mode === "wd") text = "周一到周五 " + (sched.at || "--:--");
+    else if (sched.mode === "hourly") text = "每小时第 " + sched.min + " 分执行 · cron：" + cronText("hourly", sched);
+    else if (sched.mode === "monthly") text = "每月 1 日 " + (sched.at || "--:--") + " · cron：" + cronText("monthly", sched);
+    parseEl.textContent = text;
+    parseEl.dataset.ok = "true";
+  }
+
+  // cron 模式：防抖 + 序号防过期 —— 输入已变就丢掉旧结果，别让慢响应覆盖新内容
+  let cronSeq = 0, cronTimer = 0;
+  function checkCron() {
+    clearTimeout(cronTimer);
+    const expr = sched.expr.trim();
+    if (!expr) {
+      cronSeq++;
+      parseEl.textContent = "填写 5 段 cron：分钟 小时 日期 月份 星期";
+      parseEl.dataset.ok = "false";
+      syncSaveBtn();
+      return;
+    }
+    cronTimer = setTimeout(async () => {
+      const seq = ++cronSeq;
+      const r = await api("/api/tasks/cron_check", { cron: expr }).catch(() => null);
+      if (seq !== cronSeq) return;                   // 输入又变了，这份结果过期
+      if (r && r.ok) {
+        parseEl.textContent = "cron：" + r.cron + " · " + r.human;
+        parseEl.dataset.ok = "true";
+      } else {
+        parseEl.textContent = (r && r.error) || "校验没通过，请检查表达式";
+        parseEl.dataset.ok = "false";
+      }
+      syncSaveBtn();
+    }, 300);
+  }
+
+  function syncSaveBtn() {
+    saveBtn.disabled = sched.mode === "cron" && parseEl.dataset.ok !== "true";
+  }
+
   function syncKindUi() {
-    powBox.classList.toggle('hide', kindSel.value !== 'wifi_power');
-    devBox.classList.toggle('hide', kindSel.value !== 'wake');
-    if (kindSel.value === 'wake') buildDevPick();
+    powBox.classList.toggle("hide", kindSel.value !== "wifi_power");
+    devBox.classList.toggle("hide", kindSel.value !== "wake");
+    if (kindSel.value === "wake") buildDevPick();
   }
   let pickedDevs = null;
   function buildDevPick() {
     if (pickedDevs) return;
-    const box2 = box.querySelector('#tDevPick');
+    const box2 = box.querySelector("#tDevPick");
     const hosts = (S.hosts && S.hosts.hosts) || [];
     if (!hosts.length) {
       box2.innerHTML = '<div class="sub">读不到设备列表，先到「设备」页刷新一下</div>';
@@ -2459,24 +2569,47 @@ function taskDialog(src) {
     }));
   }
   kindSel.addEventListener('change', syncKindUi);
-  syncDaysUi(); syncKindUi();
+
+  schedSel.addEventListener("change", () => {
+    // 切档前把当前控件的值收进状态，回来时还原（每小时→每天时间不丢）
+    const live = timeHost.querySelector("#tAt, #tMin, #tCron");
+    if (live && live.id === "tAt") sched.at = live.value || sched.at;
+    if (live && live.id === "tMin" && live.value !== "") sched.min = Math.min(59, Math.max(0, Math.floor(Number(live.value) || 0)));
+    if (live && live.id === "tCron") sched.expr = live.value;
+    sched.mode = schedSel.value;
+    cronSeq++;                                     // 丢弃在途的校验结果
+    buildTimeCtl();
+    if (sched.mode === "cron") checkCron();
+    else schedPreview();
+    syncSaveBtn();
+  });
+
+  buildTimeCtl();
+  if (sched.mode === "cron") checkCron();
+  else schedPreview();
+  syncKindUi();
+  syncSaveBtn();
 
   function close() { mask.remove(); document.removeEventListener('keydown', onKey); }
   function onKey(e) { if (e.key === 'Escape') close(); }
   box.querySelectorAll('[data-a="x"]').forEach(b => b.addEventListener('click', close));
   box.querySelector('[data-a="save"]').addEventListener('click', async () => {
     const kind = kindSel.value;
+    if (sched.mode === "cron" && saveBtn.disabled) return;
     const payload = {
-      id: cur.id || '',
-      name: box.querySelector('#tName').value.trim(),
+      id: cur.id || "",
+      name: box.querySelector("#tName").value.trim(),
       kind: kind,
-      at: box.querySelector('#tAt').value || '03:30',
-      days: [...chosen].sort(),
-      enabled: isNew ? true : !!cur.enabled,
+      enabled: box.querySelector("#tEnabled").checked,
       params: {},
     };
-    if (kind === 'wifi_power') payload.params.power_mode = Number(box.querySelector('#tPow').value);
-    if (kind === 'wake') {
+    if (sched.mode === "daily") { payload.at = sched.at || "03:30"; payload.days = [1, 2, 3, 4, 5, 6, 7]; }
+    else if (sched.mode === "wd") { payload.at = sched.at || "03:30"; payload.days = [1, 2, 3, 4, 5]; }
+    else if (sched.mode === "hourly") payload.cron = sched.min + " * * * *";
+    else if (sched.mode === "monthly") payload.cron = cronText("monthly", sched);
+    else payload.cron = sched.expr.trim();
+    if (kind === "wifi_power") payload.params.power_mode = Number(box.querySelector('#tPow').value);
+    if (kind === "wake") {
       const hosts = (S.hosts && S.hosts.hosts) || [];
       const sel = [...(pickedDevs || new Set())];
       if (!sel.length) return toast('至少选一台设备', '', 'alert');
@@ -2485,12 +2618,11 @@ function taskDialog(src) {
         return { mac: m, name: h.name || '', ipv4: h.ipv4 || '' };
       });
     }
-    if (!payload.days.length) return toast('至少选一天', '', 'alert');
     const r = await api('/api/tasks/save', payload).catch(() => null);
     if (!r || !r.ok) return errToast(r);
     close();
-    toast(isNew ? '任务已添加' : '任务已保存', payload.at + ' · ' + (chosen.size === 7 ? '每天' : chosen.size + ' 天'),
-      'check');
+    const whenText = parseEl.textContent || "";
+    toast(isNew ? '任务已添加' : '任务已保存', whenText, 'check');
     loadTasks();
   });
   mask.addEventListener('click', e => { if (e.target === mask) close(); });

@@ -32,7 +32,7 @@ import re
 import threading
 import time
 
-from . import discover, wol
+from . import cronexpr, discover, wol
 
 log = logging.getLogger("ipv6sync.tasks")
 
@@ -50,6 +50,8 @@ WINDOW = 180.0          # 计划点之后多久之内还算「到点」
 MAX_TASKS = 32          # 上限，防止误操作灌进来几百条
 MAX_WAKE_DEVS = 20      # 一条唤醒任务最多选几台设备
 WAKE_GAP = 1.0          # 多台设备之间间隔几秒再发（个别老网卡对连续广播敏感）
+# cron 任务判「已错过」时往前找多少天（与普通任务 8 天的回看范围对齐）
+CRON_LOOKBACK_DAYS = 8
 
 QUIET = {               # 执行后多久内不碰路由器、不判定同步失败
     "reboot": 240.0,
@@ -89,8 +91,17 @@ def _days_of(task: dict) -> list[int]:
     return out or [1, 2, 3, 4, 5, 6, 7]
 
 
-def last_slot(task: dict, now: float) -> float | None:
+def last_slot(task: dict, now: float, lookback_min: int | None = None) -> float | None:
     """<= now 的最近一个计划点；没有则 None。往前看 8 天足够覆盖「每周一次」。"""
+    if task.get("cron"):
+        # cron 任务：往前逐分钟扫。判「到点」只回看一个窗口（很快）；
+        # 判「已错过」时由调用方传 8 天（只在启动时跑一遍）。
+        lb = (CRON_LOOKBACK_DAYS * 1440 if lookback_min is None
+              else lookback_min)
+        try:
+            return cronexpr.prev_within(task["cron"], now, lb)
+        except ValueError:
+            return None
     try:
         hh, mm = parse_at(task.get("at"))
     except ValueError:
@@ -108,7 +119,12 @@ def last_slot(task: dict, now: float) -> float | None:
 
 
 def next_slot(task: dict, now: float) -> float | None:
-    """> now 的最近一个计划点；永远有值（除非 at 非法）。"""
+    """> now 的最近一个计划点；永远有值（除非计划非法）。"""
+    if task.get("cron"):
+        try:
+            return cronexpr.next_after(task["cron"], now)
+        except ValueError:
+            return None
     try:
         hh, mm = parse_at(task.get("at"))
     except ValueError:
@@ -131,7 +147,10 @@ def due_slot(task: dict, now: float, window: float = WINDOW) -> float | None:
     """
     if not task.get("enabled", True):
         return None
-    slot = last_slot(task, now)
+    # cron 任务只需要知道「窗口内有没有计划点」，往前扫一个窗口就够
+    #（每月 1 日这种，按 8 天回扫一次要几万步，每 3 秒来一次太浪费）。
+    lb = int(window // 60) + 1 if task.get("cron") else None
+    slot = last_slot(task, now, lookback_min=lb)
     if slot is None or (now - slot) > window:
         return None
     # 计划生效之前的点根本不存在 —— 14:00 新建的「每天 10:00」任务，
@@ -211,8 +230,23 @@ def clean_task(raw: dict, now: float | None = None) -> dict:
     if len(name) > 30:
         raise ValueError("任务名最多 30 个字")
 
-    hh, mm = parse_at(raw.get("at"))
-    days = _days_of(raw)
+    # 两种计划二选一：cron 表达式（每小时/每月/自定义）或 时刻+星期（旧格式，
+    # 「每天/工作日」仍然存它，老 tasks.json 不用迁移）。
+    cron = cronexpr.normalize(str(raw.get("cron") or ""))
+    out: dict = {
+        "id": str(raw.get("id") or "").strip() or _new_id(now),
+        "name": name,
+        "kind": kind,
+        "enabled": bool(raw.get("enabled", True)),
+        "params": {},
+    }
+    if cron:
+        cronexpr.parse(cron)              # 坏写法在这里抛 ValueError
+        out["cron"] = cron
+    else:
+        hh, mm = parse_at(raw.get("at"))
+        out["at"] = "%02d:%02d" % (hh, mm)
+        out["days"] = _days_of(raw)
     params: dict = {}
     if kind == "wifi_power":
         pm = raw.get("params", {}).get("power_mode")
@@ -226,15 +260,7 @@ def clean_task(raw: dict, now: float | None = None) -> dict:
     elif kind == "wake":
         params["devices"] = _clean_devices(raw.get("params") or {})
 
-    out = {
-        "id": str(raw.get("id") or "").strip() or _new_id(now),
-        "name": name,
-        "kind": kind,
-        "enabled": bool(raw.get("enabled", True)),
-        "at": "%02d:%02d" % (hh, mm),
-        "days": days,
-        "params": params,
-    }
+    out["params"] = params
     # 运行时字段原样保留（编辑时不清空执行历史）
     for k in ("last_slot", "last_run_at", "last_ok", "last_msg"):
         if k in raw:
@@ -250,14 +276,17 @@ def clean_task(raw: dict, now: float | None = None) -> dict:
 
 def describe(task: dict) -> str:
     """一句话说清什么时候执行，页面直接显示。"""
-    at = task.get("at") or "--:--"
-    days = _days_of(task)
-    if days == [1, 2, 3, 4, 5, 6, 7]:
-        when = "每天 " + at
-    elif len(days) == 1:
-        when = "每周%s " % _WEEK[days[0]] + at
+    if task.get("cron"):
+        when = cronexpr.human(task["cron"])
     else:
-        when = "每周" + "、".join(_WEEK[d] for d in days) + " " + at
+        at = task.get("at") or "--:--"
+        days = _days_of(task)
+        if days == [1, 2, 3, 4, 5, 6, 7]:
+            when = "每天 " + at
+        elif len(days) == 1:
+            when = "每周%s " % _WEEK[days[0]] + at
+        else:
+            when = "每周" + "、".join(_WEEK[d] for d in days) + " " + at
     if task.get("kind") == "wifi_power":
         when += " → " + POWER_MODES.get(
             (task.get("params") or {}).get("power_mode"), "?")
@@ -608,11 +637,13 @@ class Tasks:
         with self._lock:
             for i, t in enumerate(self._items):
                 if t["id"] == task["id"]:
-                    # 改了执行时间/星期/类型 = 计划重新开始，从这一刻起算；
+                    # 改了执行时间/星期/cron/类型 = 计划重新开始，从这一刻起算；
                     # 只改名字或启停则保留原来的生效时刻。
-                    resched = ((t.get("at"), t.get("days") or [], t.get("kind"))
-                               != (task.get("at"), task.get("days") or [],
-                                   task.get("kind")))
+                    resched = (
+                        (t.get("at"), t.get("days") or [], t.get("cron") or "",
+                         t.get("kind"))
+                        != (task.get("at"), task.get("days") or [],
+                            task.get("cron") or "", task.get("kind")))
                     task["since"] = stamp if resched else float(t.get("since") or 0.0)
                     self._items[i] = task
                     self._save_locked()

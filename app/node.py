@@ -680,6 +680,21 @@ class Node:
     def tasks_view(self) -> dict:
         return self.tasks.view()
 
+    def task_cron_check(self, data: dict) -> dict:
+        """弹窗里输 cron 时实时校验：合法给「人话」，不合法给一句能懂的原因。
+
+        纯校验，不落盘、不动调度 —— 单一解析源在后端，前端预览和表格里
+        「重复」列显示的句子保证一致。
+        """
+        from . import cronexpr
+        expr = cronexpr.normalize(str(data.get("cron") or ""))
+        if not expr:
+            return {"ok": False, "error": "还没有填写 cron 表达式"}
+        try:
+            return {"ok": True, "cron": expr, "human": cronexpr.human(expr)}
+        except ValueError as e:
+            return {"ok": False, "error": str(e)}
+
     def tasks_tick(self) -> dict | None:
         return self.tasks.tick()
 

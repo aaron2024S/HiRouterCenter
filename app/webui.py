@@ -298,6 +298,9 @@ class WebUI:
             # ---- 计划任务（读不需要动作，写全部要求登录 + 同源，已在上方拦过） ----
             if method == "GET" and route == "/api/tasks":
                 return handler.send_json(self.node.tasks_view())
+            if method == "POST" and route == "/api/tasks/cron_check":
+                return handler.send_json(
+                    self.node.task_cron_check(_json_body(body)))
             if method == "POST" and route == "/api/tasks/save":
                 return handler.send_json(self.node.task_save(_json_body(body)))
             if method == "POST" and route == "/api/tasks/delete":
