@@ -22,12 +22,12 @@ on:
         type: string
 
   # 想让「打 git tag 就自动构建」：把下面两行的 # 去掉即可。
-  # tag 名会直接当镜像标签用，例如 git tag v1.0.6 → 镜像 aaron2024s/ipv6sync:v1.0.6
+  # tag 名会直接当镜像标签用，例如 git tag v1.0.6 → 镜像 aaron2024s/hiroutercenter:v1.0.6
   # push:
   #   tags: ['v*']
 
 env:
-  IMAGE_NAME: ipv6sync
+  IMAGE_NAME: hiroutercenter
 
 jobs:
   docker:

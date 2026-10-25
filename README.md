@@ -1,6 +1,8 @@
 # HiRouterCenter · 华为路由器控制中心
 
-> 程序名 **HiRouterCenter**；Docker 镜像名仍是 `aaron2024s/ipv6sync`（保持旧部署的 compose 不用改）。
+> 程序名 **HiRouterCenter**；仓库与 Docker 镜像同名：仓库 `aaron2024S/HiRouterCenter`、
+> 镜像 `aaron2024s/hiroutercenter`（2026-10-25 起改名；老镜像名 `aaron2024s/ipv6sync`
+> 的历史 tag 保留，新部署请用新名）。
 
 NAS 上跑一个容器，**盯着自己（以及家里设备）的 IPv6 地址**。地址一变，就自动把华为路由器
 `/api/ntwk/ip6firewall_trustlist`（IPv6 防火墙白名单）里对应的那条规则原地更新。
@@ -567,9 +569,9 @@ python -m unittest discover -s tests -t . -v
 ## 变更记录
 
 ### 1.2.0（大改版）
-- **程序改名 `HiRouterCenter`（华为路由器控制中心）**。Docker 镜像名保持
-  `aaron2024s/ipv6sync` 不变 —— 老部署的 compose / 镜像地址都不用动。
-  改造前的代码留在 tag `pre-hirouter` 上。
+- **程序改名 `HiRouterCenter`（华为路由器控制中心）**。当时 Docker 镜像名保持
+  `aaron2024s/ipv6sync` 不变（后于 2026-10-25 随仓库一起改为
+  `aaron2024s/hiroutercenter`）。改造前的代码留在 tag `pre-hirouter` 上。
 - **全新界面**：左侧栏六个页面 —— 设备 / IPv6 防火墙 / 计划任务 / 通知 / 路由器设置 / 关于；
   独立主题色（iris 蓝紫），图标全部重画；侧栏可收起，手机端是抽屉。
 - **首页 = 设备列表**，顶部换成**路由器信息卡**：产品名（如「华为凌霄子母路由 Q7 网线版」）、
@@ -607,6 +609,8 @@ python -m unittest discover -s tests -t . -v
   （上次同步 / 下次检测时间冻结）。
 - **设备网格**：1180~1599px 改 4 列（原来直接 5 列，中宽屏拥挤），≥1600px 才 5 列。
 - 单测 **360 项**。
+- 发布后同日：GitHub 仓库改名 `aaron2024S/HiRouterCenter`、Docker 镜像改名
+  `aaron2024s/hiroutercenter`，1.2.5 在新镜像名下重新发布（内容与已发版完全一致）。
 
 ### 1.2.4
 计划任务弹窗两处修复：

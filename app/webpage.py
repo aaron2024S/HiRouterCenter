@@ -1329,7 +1329,7 @@ html[data-theme="light"] .tpick-mask{background:rgba(30,34,56,.34)}
             <div class="lnk plain" style="margin-top:9px">
               <svg class="i"><use href="#i-copy"/></svg>
               <span>Docker 镜像</span>
-              <em class="u">aaron2024s/ipv6sync:latest</em>
+              <em class="u">aaron2024s/hiroutercenter:latest</em>
               <button class="btn btn-sm" id="btnCopyImage" style="margin-left:8px">复制</button>
             </div>
           </div>
@@ -3152,7 +3152,7 @@ $('#btnCopyDiag').addEventListener('click', () => {
   else toast('复制失败', '手动选中复制', 'alert');
 });
 $('#btnCopyImage').addEventListener('click', () => {
-  const img = 'aaron2024s/ipv6sync:latest';
+  const img = 'aaron2024s/hiroutercenter:latest';
   if (copyText(img)) toast('镜像名已复制', 'docker pull ' + img, 'check');
   else toast('复制失败', '手动选中复制', 'alert');
 });
