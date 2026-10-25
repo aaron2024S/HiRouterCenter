@@ -2419,11 +2419,12 @@ function taskDialog(src) {
       + (k === cur.kind ? ' selected' : '') + '>' + escHtml(v) + '</option>').join('')
     + '</select></div></div>'
     + '<div class="egrid2">'
-    + '<div class="efld"><label id="tTimeLabel">执行时间</label><span id="tTimeHost"></span></div>'
     + '<div class="efld"><label>重复</label><select class="sel" id="tSched">'
     + SCHED_MODES.map(([v, n]) => '<option value="' + v + '"'
       + (v === sched.mode ? ' selected' : '') + '>' + escHtml(n) + '</option>').join('')
-    + '</select></div></div>'
+    + '</select></div>'
+    + '<div class="efld"><label id="tTimeLabel">执行时间</label><span id="tTimeHost"></span></div>'
+    + '</div>'
     + '<div class="efld" id="tParseRow"><span id="tParse"></span></div>'
     + '<div class="efld hide" id="tPowBox"><label>功率模式</label><select class="sel" id="tPow">'
     + Object.entries(pms).map(([k, v]) => '<option value="' + k + '"'
