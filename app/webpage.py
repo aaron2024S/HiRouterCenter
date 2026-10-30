@@ -215,7 +215,11 @@ a.lnk:hover .go{color:var(--accent-text)}
 .badge-warn .dot{background:var(--warn)}
 .badge-accent{background:var(--accent-soft);color:var(--accent-text)}
 .badge-err{background:var(--soft-err);color:var(--err-text)}
+.badge-err .dot{background:var(--err)}
 .badge-plain{background:var(--line-2);color:var(--text-4)}
+/* 中性徽标不带状态点。注意：.dot 若只是「没配色」会变成透明的 7px 占位块，
+   加上 5px gap 一共把文字往右推 12px，看起来就是「文字没居中」—— 所以是直接不渲染。 */
+.badge-plain .dot{display:none}
 .seg{display:inline-flex;gap:4px;border:1px solid var(--line-2);border-radius:10px;
   background:var(--ink-800);padding:3px}
 .seg button{border:0;border-radius:7px;background:transparent;color:var(--text-3);
