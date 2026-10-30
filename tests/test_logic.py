@@ -77,6 +77,8 @@ class FakeRouter:
             return [dict(e) for e in self.entries]
         if name == "HostInfo":
             return self.hosts
+        if name == "device/topology":
+            return []            # 假固件不支持拓扑 → Node 走「只排除、不分组」降级
         raise AssertionError(f"假路由器没实现 GET {name}")
 
     def post(self, name, data=None, wrapped=True, action=None):

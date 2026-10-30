@@ -45,6 +45,8 @@ class FakeRouter:
             return self.hosts
         if name == "ntwk/wlanfilterenhance":
             return self.wl
+        if name == "device/topology":
+            return []
         raise AssertionError("假路由器没实现 GET " + name)
 
     def post(self, name, data=None, wrapped=True, action=None):

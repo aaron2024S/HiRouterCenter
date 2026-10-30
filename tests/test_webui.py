@@ -306,6 +306,8 @@ class FakeRouter:
                      "Ipv6Addrs": [{"Ipv6Addr": "240e:3a4:48ff:6d10::1"}]}]
         if name == "ntwk/wlanfilterenhance":
             return []
+        if name == "device/topology":
+            return []
         raise AssertionError(name)
 
     def post(self, name, data=None, wrapped=True, action=None):
@@ -1035,9 +1037,11 @@ class NodeHostsTest(EnvSandbox):
     """Node.hosts() 的数据整形逻辑（用假路由器，不联网）。"""
 
     class FakeR:
-        def __init__(self, wlan=None, entries=None):
+        def __init__(self, wlan=None, entries=None, topology=None):
             self.logged_in = True
             self.entries = entries if entries is not None else []
+            # 默认空数组 = 这台固件不支持拓扑（Node 会降级：只排除、不分组）
+            self.topology = topology if topology is not None else []
             self.wlan = wlan if wlan is not None else [
                 {"WifiModulename": "WIFI-2.4G",
                  "BMACAddresses": [{"MACAddress": "04:F1:28:1A:01:73",
@@ -1068,6 +1072,8 @@ class NodeHostsTest(EnvSandbox):
                 return self.wlan
             if name == "ip6firewall_trustlist":
                 return self.entries
+            if name == "device/topology":
+                return self.topology
             raise AssertionError(name)
 
     def make(self, **kw) -> Node:
@@ -1229,6 +1235,8 @@ class DeviceRuleSyncTest(unittest.TestCase):
                 return self.entries
             if name == "HostInfo":
                 return self.hosts
+            if name == "device/topology":
+                return []
             raise AssertionError(name)
 
         def post(self, name, data=None, wrapped=True, action=None):

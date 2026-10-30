@@ -17,11 +17,12 @@ import ipaddress
 import logging
 import os
 import threading
+import time
 
 from . import (devtypes, discover, events, notify, notify_events, notify_presets,
                router_info, settings as st, tasks as tk, trustlist, wol)
 from .config import load_config
-from .router import HuaweiRouter, RouterError
+from .router import HuaweiRouter, NotLoggedIn, RouterError
 from .sync import Syncer
 
 log = logging.getLogger("ipv6sync.node")
@@ -136,6 +137,134 @@ def _cfg(node) -> object:
     try:        return node.cfg
     except AttributeError:
         return node.syncer.cfg
+
+
+# --------------------------------------------------------------------------
+# Mesh 拓扑：子路由本身 / 谁挂在谁下面
+#
+# 依据（免登录逆向固件前端，chunk 9 = 终端页 + main.js 路由表）：
+#   * 接口 `device/topology`（路由表里 `topology:"device/topology"`，即 /api/device/topology）
+#   * 返回的顶层数组**每一项是一个路由器节点**：
+#         {MACAddress, HiLinkType, ConnectedDevices:[...], routerSelf}
+#   * `"Device" === node.HiLinkType` → 这条是路由器 / 子路由；终端设备的 HiLinkType 不是 Device
+#   * `selfDevice = topology 里 routerSelf == 1 的那条` → 主路由自己，
+#     `childDevices = 去掉 selfDevice` → 所有子路由
+#   * 节点下挂的终端在它自己的 ConnectedDevices 里（多层 Mesh 可递归）
+#
+# 没有真机返回样本，所以字段名一律多重兜底；认不出就当「这台固件没有拓扑」：
+# 上层只做 VendorClassID 排除、不显示分组 —— 绝不因为一个新功能把设备列表搞空。
+# --------------------------------------------------------------------------
+
+_MAC_KEYS = ("MACAddress", "MacAddress", "macAddress", "Mac", "mac", "MAC")
+_CHILD_KEYS = ("ConnectedDevices", "connectedDevices", "ChildDevices", "childDevices",
+               "SubDevices", "subDevices", "Devices", "devices")
+_HITYPE_KEYS = ("HiLinkType", "hilinktype", "hiLinkType", "LinkType")
+_SELF_KEYS = ("routerSelf", "RouterSelf", "isSelf", "Self")
+_HLINK_DEVICE = "device"
+
+# HostInfo 里路由器类设备的 VendorClassID 关键词。
+# 固件给子路由算速率时就是这么排的 —— 这是**不依赖拓扑接口**的第二套判据。
+_NODE_VENDOR_HINTS = ("router", "plcap", "repeater")
+
+# 拓扑缓存的存活时间（秒）。成功一次管一分钟，失败一次管五分钟：
+# 老固件没有这个接口时，别每次刷新设备页都去撞一次 404。
+_MESH_TTL = 60
+_MESH_FAIL_TTL = 300
+
+
+def _pick(d: dict, keys) -> object:
+    """按候选键名取值，第一个非空的就是它（固件不同版本字段名会飘）。"""
+    for k in keys:
+        if k in d:
+            v = d[k]
+            if v is not None and v != "":
+                return v
+    return ""
+
+
+def _as_list(v, depth: int = 0) -> list:
+    """把「list / {data:[...]} / 单个对象」统一成 list。
+
+    华为这套接口有时直接返回裸数组，有时外面套一层 data —— 两种都得认。
+    """
+    if isinstance(v, list):
+        return v
+    if isinstance(v, dict) and depth < 3:
+        for k in ("data", "Data", "devices", "Devices", "topology", "Topology",
+                  "nodes", "Nodes", "result", "list"):
+            if k in v:
+                got = _as_list(v[k], depth + 1)
+                if got:
+                    return got
+        return [v]
+    return []
+
+
+def _fmt_mac(key: str) -> str:
+    """12 位 hex → AA:BB:CC:DD:EE:FF（只用于显示，内部一律用 norm_mac）。"""
+    if len(key) != 12:
+        return key
+    return ":".join(key[i:i + 2] for i in range(0, 12, 2)).upper()
+
+
+def _looks_like_node(h: dict) -> bool:
+    """HostInfo 里这条是不是路由器类设备（子路由 / 电力线 AP / 中继）。
+
+    拓扑读不到时就靠这条把子路由从设备列表里排掉。判据与固件一致
+    （VendorClassID 含 router / PLCAP / repeater），所以不会比固件自己更激进。
+    """
+    v = str(h.get("VendorClassID") or h.get("VendorClassId") or "").lower()
+    return any(x in v for x in _NODE_VENDOR_HINTS)
+
+
+def parse_topology(tree):
+    """`device/topology` → (节点列表, {终端 MAC: 所在节点 MAC})。
+
+    节点列表按「主路由在前、其余保持固件顺序」排。返回 (None, {}) 表示这份
+    数据里认不出任何路由器节点（接口不存在 / 结构变了）—— 调用方据此降级。
+    """
+    nodes: list[dict] = []
+    by_key: dict[str, dict] = {}
+    owner: dict[str, str] = {}
+
+    def walk(item, parent: str):
+        if not isinstance(item, dict):
+            return
+        key = discover.norm_mac(str(_pick(item, _MAC_KEYS) or ""))
+        hitype = str(_pick(item, _HITYPE_KEYS) or "").strip().lower()
+        is_self = _truthy(_pick(item, _SELF_KEYS))
+        if hitype == _HLINK_DEVICE or is_self:
+            if key and key not in by_key:
+                node = {
+                    "key": key,
+                    "mac": _fmt_mac(key),
+                    "name": str(_pick(item, ("HostName", "DevName", "DeviceName",
+                                             "Name", "nickname")) or "").strip(),
+                    "model": str(_pick(item, ("DeviceModel", "Model", "ProductName",
+                                              "DeviceTypeName", "DeviceType")) or "").strip(),
+                    "self": is_self,
+                    "parent": parent,
+                }
+                by_key[key] = node
+                nodes.append(node)
+            parent = key or parent          # 它下面挂的东西归它
+        for child in _as_list(_pick(item, _CHILD_KEYS)):
+            if not isinstance(child, dict):
+                continue
+            ckey = discover.norm_mac(str(_pick(child, _MAC_KEYS) or ""))
+            ctype = str(_pick(child, _HITYPE_KEYS) or "").strip().lower()
+            if ctype == _HLINK_DEVICE or _truthy(_pick(child, _SELF_KEYS)):
+                walk(child, parent)         # 嵌套在里面的子路由，继续往下走
+            elif ckey and ckey != key:
+                owner.setdefault(ckey, parent)
+
+    for item in _as_list(tree):
+        walk(item, "")
+
+    if not nodes:
+        return None, {}
+    nodes.sort(key=lambda n: 0 if n["self"] else 1)
+    return nodes, owner
 
 
 def _parse_blacklist(res) -> list:
@@ -286,6 +415,10 @@ class Node:
             self.overlay = clean
             self.router = new_router
             self.syncer.reconfigure(new_cfg, new_router)
+            # 换了路由器：拓扑缓存与「这台没有拓扑」的判断都得重来，
+            # 否则换到一台支持的机器上还得等容器重启才认。
+            self._mesh_cache = None
+            self._mesh_off = False
 
             log.info("网页设置已应用（%d 项变更）", len(patch))
             return {"overview": self.overview(),
@@ -765,16 +898,95 @@ class Node:
             pass
         return None
 
-    def _host_rows(self) -> list[dict]:
+    # ---------------- Mesh 拓扑（子路由分组） ----------------
+
+    def _read_mesh(self):
+        """调 `device/topology` 并解析。读不到返回 None（不抛错、不影响设备列表）。"""
+        if getattr(self, "_mesh_off", False):
+            return None
+        try:
+            raw = self.router.get("device/topology")
+        except NotLoggedIn:
+            # 固件用「404 空响应」隐藏它不支持的路径，router 层遇到这个会顺手注销
+            # 会话（正常逻辑：令牌失效了别继续拿它撞）。但拓扑只是**探测性**请求，
+            # 不能因为它把整个设备页变成「未登录」，所以：
+            #   1) 永久记下「这台没有拓扑」，之后不再请求；
+            #   2) 立刻重新登录把会话补回来。
+            self._mesh_off = True
+            log.info("这台路由器没有拓扑接口，设备页不提供按节点筛选")
+            if self.syncer.ensure_login():
+                log.info("拓扑探测把会话撞掉了，已自动重新登录")
+            return None
+        except RouterError as e:
+            log.info("读拓扑失败（%s），设备页不提供按节点筛选", e)
+            return None
+        nodes, owner = parse_topology(raw)
+        if not nodes:
+            # 只打前 300 字符：够定位字段名，又不会把整份拓扑刷进日志
+            log.warning("拓扑接口返回的结构认不出来，已跳过 Mesh 分组：%s",
+                        str(raw)[:300])
+            return None
+        return {"nodes": nodes, "owner": owner, "grouped": bool(owner)}
+
+    def _mesh(self):
+        """带缓存的拓扑读取。失败也缓存（更久），避免每次刷新都撞一次不存在的接口。"""
+        now = time.time()
+        hit = getattr(self, "_mesh_cache", None)
+        if hit and now - hit[0] < hit[2]:
+            return hit[1]
+        data = self._read_mesh()
+        self._mesh_cache = (now, data, _MESH_TTL if data else _MESH_FAIL_TTL)
+        return data
+
+    def _mesh_view(self, raw_hosts=None) -> dict:
+        """设备页的分组数据（下拉与节点卡共用）。
+
+        节点名优先用固件拓扑给的，其次同 MAC 那台在 HostInfo 里的名字，最后是型号。
+        `grouped` 为假表示拓扑里没有任何终端归属信息 —— 前端就别显示下拉了。
+        """
+        mesh = self._mesh()
+        if not mesh:
+            return {"ok": False, "nodes": []}
+        raw = raw_hosts if raw_hosts is not None else (self.router.get("HostInfo") or [])
+        by_mac: dict[str, dict] = {}
+        for h in raw:
+            if not isinstance(h, dict):
+                continue
+            k = discover.norm_mac(str(h.get("MACAddress") or ""))
+            if k:
+                by_mac.setdefault(k, h)
+        out = []
+        for n in mesh["nodes"]:
+            h = by_mac.get(n["key"]) or {}
+            name = (n["name"] or discover.host_display_name(h) or n["model"]
+                    or ("主路由" if n["self"] else "") or n["mac"])
+            out.append({"key": n["key"], "mac": n["mac"], "name": name,
+                        "model": n["model"], "self": n["self"],
+                        "parent": n["parent"]})
+        return {"ok": True, "grouped": mesh["grouped"], "nodes": out}
+
+    def _host_rows(self, raw_hosts=None) -> list[dict]:
         """HostInfo → 设备行（设备列表页与白名单弹窗共用）。调用方需已登录。
 
         每行带一个 `type`（设备类型图标用）：用户手改的 > 固件字段 > 关键词猜。
+        子路由 / 路由器本身不算终端，这里直接跳过（见 Mesh 拓扑那段注释）。
         """
         rows = []
         # 用 _cfg() 兜底：单元测试里会用 Node.__new__ 只装配 syncer + router
         state_file = _cfg(self).state_file
         manual = devtypes.load(state_file)
-        for h in self.router.get("HostInfo") or []:
+        if raw_hosts is None:
+            raw_hosts = self.router.get("HostInfo") or []
+        mesh = self._mesh()
+        nodes = (mesh or {}).get("nodes") or []
+        owner = (mesh or {}).get("owner") or {}
+        node_keys = {n["key"] for n in nodes}
+        for h in raw_hosts:
+            if not isinstance(h, dict):
+                continue
+            key = discover.norm_mac(str(h.get("MACAddress") or ""))
+            if key and (key in node_keys or _looks_like_node(h)):
+                continue
             addrs = discover.host_candidates(h)
             offline_at = (h.get("OfflineRecord") or "").split("#")[0].strip()
             active = _truthy(h.get("Active"))
@@ -801,6 +1013,8 @@ class Node:
                              if _truthy(h.get("DeviceDownRateEnable")) else 0),
                 "limit_down": (_kbps_of(h, "DeviceMaxDownLoadRate")
                                if _truthy(h.get("DeviceDownRateEnable")) else 0),
+                # 挂在哪个 Mesh 节点下（节点 MAC）。空 = 直连主路由 / 拓扑里没写
+                "node": owner.get(key, ""),
             })
         rows.sort(key=lambda r: r["mac"])
         return rows
@@ -812,7 +1026,9 @@ class Node:
             if err:
                 return {"ok": False, "error": err}
             try:
-                rows = self._host_rows()
+                raw_hosts = self.router.get("HostInfo") or []
+                rows = self._host_rows(raw_hosts)
+                mesh = self._mesh_view(raw_hosts)
             except RouterError as e:
                 return {"ok": False, "error": str(e)}
             # 黑名单是另一个接口（wlanfilterenhance），失败不拖累设备列表本身
@@ -835,6 +1051,8 @@ class Node:
                 entries = []
             return {"ok": True, "hosts": rows,
                     "blacklist": blacklist, "blacklist_error": bl_error,
+                    # Mesh 分组：ok=False 表示这台固件没有可用拓扑（前端隐藏下拉）
+                    "mesh": mesh,
                     "lan_prefixes": discover.lan_prefixes(self.router),
                     "entries": entries,
                     # 规则列表顺手带上（纯内存，不额外请求路由器）：

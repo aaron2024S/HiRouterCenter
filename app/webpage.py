@@ -279,6 +279,34 @@ a.lnk:hover .go{color:var(--accent-text)}
 /* ===== 设备卡片 ===== */
 .filterrow{display:flex;flex-wrap:wrap;align-items:center;gap:10px}
 .chips{display:flex;flex-wrap:wrap;gap:6px}
+/* Mesh 节点说明条与节点卡：只有固件给出拓扑时才出现，单路由用户看不到这东西 */
+/* .optbar/.ngrid 自带 display:flex|grid，会盖掉 [hidden] 的 UA 样式，所以这里补一刀 */
+[hidden]{display:none!important}
+.optbar{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:10px;
+  border:1px solid var(--line-2);border-radius:9px;background:var(--ink-800);
+  padding:7px 10px;font-size:11.5px;line-height:1.5;color:var(--text-5)}
+.optbar b{font-weight:500;color:var(--text-3)}
+.optbar label{display:inline-flex;align-items:center;gap:5px;margin-left:auto;
+  cursor:pointer;color:var(--text-4);user-select:none;white-space:nowrap}
+.optbar input{width:13px;height:13px;margin:0;accent-color:var(--accent)}
+.ngrid{display:grid;grid-template-columns:1fr;gap:10px;margin-bottom:12px}
+@media(min-width:760px){.ngrid{grid-template-columns:repeat(3,minmax(0,1fr))}}
+@media(min-width:1180px){.ngrid{grid-template-columns:repeat(4,minmax(0,1fr))}}
+.mnode{border:1px solid var(--line-2);border-radius:11px;background:var(--ink-800);
+  padding:10px 11px;cursor:pointer;transition:border-color .14s,background .14s}
+.mnode:hover{border-color:var(--accent-line)}
+.mnode.sel{border-color:var(--accent-line);background:var(--soft-accent)}
+.mnode .mn{display:flex;align-items:center;gap:6px;min-width:0}
+.mnode .mn b{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
+  font-size:12.5px;font-weight:600;color:var(--text-1)}
+.mnode .mn .self{flex:none;border:1px solid var(--accent-line);border-radius:999px;
+  padding:1px 5px;font-size:9.5px;color:var(--accent-text)}
+.mnode .mm{margin-top:2px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
+  font-family:var(--mono);font-size:10.5px;color:var(--text-6)}
+.mnode .ms{display:flex;align-items:baseline;gap:5px;margin-top:7px;
+  font-size:11.5px;color:var(--text-4)}
+.mnode .ms b{font-family:var(--mono);font-size:13px;color:var(--text-2)}
+.mnode .mr{margin-top:2px;font-family:var(--mono);font-size:10.5px;color:var(--text-5)}
 .devgrid{display:grid;grid-template-columns:1fr;gap:12px}
 @media(min-width:760px){.devgrid{grid-template-columns:repeat(2,minmax(0,1fr))}}
 @media(min-width:900px){.devgrid{grid-template-columns:repeat(3,minmax(0,1fr))}}
@@ -469,6 +497,7 @@ html[data-theme="light"] .tpick-mask{background:rgba(30,34,56,.34)}
   .tgrid{grid-template-columns:repeat(4,minmax(0,1fr));gap:5px;padding:10px}
   .tcell{padding:9px 3px 7px;font-size:10.5px}
   #devType{width:auto!important;max-width:none!important;flex:1 1 132px;min-width:0}
+  #devNode{width:auto!important;max-width:none!important;flex:1 1 118px;min-width:0}
   .filterrow .wrap-inp{max-width:none!important;margin-left:0!important;
     flex:1 1 132px;min-width:0}
   .seg{flex:none;max-width:100%;overflow-x:auto}
@@ -1020,8 +1049,14 @@ html[data-theme="light"] .tpick-mask{background:rgba(30,34,56,.34)}
           </div>
         </div>
 
+        <div class="optbar" id="devOptBar" hidden>
+          <span id="devOptTxt"></span>
+          <label for="devShowNodes"><input type="checkbox" id="devShowNodes">显示 Mesh 节点卡片</label>
+        </div>
+
         <div class="filterrow">
           <div class="chips" id="devChips"></div>
+          <select class="sel" id="devNode" title="按 Mesh 节点筛选" style="width:auto;max-width:210px" hidden></select>
           <select class="sel" id="devType" title="按设备类型筛选" style="width:auto;max-width:190px"></select>
           <div class="wrap-inp" style="max-width:280px;margin-left:auto">
             <svg class="i"><use href="#i-search"/></svg>
@@ -1029,6 +1064,7 @@ html[data-theme="light"] .tpick-mask{background:rgba(30,34,56,.34)}
           </div>
         </div>
 
+        <div class="ngrid" id="devNodes" hidden></div>
         <div class="devgrid" id="devGrid"></div>
       </div>
 
@@ -1459,6 +1495,9 @@ const S = {
   state: null, tasks: null, events: null, notify: null,
   info: null, hosts: null, wl: null, hist: null,
   devFilter: 'all', devQuery: '', devType: 'all',
+  /* Mesh 节点筛选：'all' = 不筛；'main' = 直连主路由（含拓扑里没写归属的）；
+     其余是节点 MAC（norm 过的 12 位小写） */
+  devNode: 'all', showNodes: false,
   page: 'devices', nTab: 'channels',
   loaded: {},          // 每页最后一次拉数据的时间，用来做缓存
 };
@@ -1556,6 +1595,7 @@ async function loadInfo() {
 }
 async function loadHosts() {
   try { S.hosts = await api('/api/router/hosts'); } catch (e) { S.hosts = { ok: false }; }
+  renderMesh();
   renderDevices();
   renderCounts();
   renderTypeFilter();
@@ -1651,10 +1691,32 @@ function devRows() {
   if (!h || !h.ok) return [];
   return h.hosts || [];
 }
+/* ---- Mesh 节点（子路由）----
+   后端已经把这些节点本身从设备列表里排掉了，这里只做分组筛选。
+   拓扑读不到时 meshNodes() 返回空数组 → 下拉与节点卡都不出现，行为跟以前完全一样。 */
+function meshNodes() {
+  const m = (S.hosts && S.hosts.mesh) || {};
+  return (m.ok && m.grouped) ? (m.nodes || []) : [];
+}
+/* 一台设备归哪个节点：后端给的 node 是节点 MAC；空 = 直连主路由。
+   主路由自己也归到 'main'，所以下拉里主路由那一项能同时收下这两种。 */
+function nodeKeyOf(d) {
+  const key = d.node || '';
+  if (!key) return 'main';
+  const n = meshNodes().find(x => x.key === key);
+  return (n && n.self) ? 'main' : key;
+}
+/* 只按节点筛过的设备集合：chips / 类型下拉的计数都跟着它走，不然选了子路由
+   还显示全量的台数，看着像筛选没生效。 */
+function nodeScoped() {
+  const rows = devRows();
+  if (S.devNode === 'all') return rows;
+  return rows.filter(d => nodeKeyOf(d) === S.devNode);
+}
 function visibleHosts() {
   const q = S.devQuery.trim().toLowerCase();
   const bl = new Set(((S.hosts && S.hosts.blacklist) || []).map(x => macKey(x.mac)));
-  return devRows().filter(d => {
+  return nodeScoped().filter(d => {
     const black = bl.has(macKey(d.mac));
     if (S.devFilter === 'online' && !d.active) return false;
     if (S.devFilter === 'offline' && d.active) return false;
@@ -2009,7 +2071,7 @@ function blacklistHost(d, on) {
   });
 }
 function renderCounts() {
-  const rows = devRows();
+  const rows = nodeScoped();
   const h = S.hosts;
   if (S.hosts && S.hosts.ok) {
     const bl = new Set(((h.blacklist) || []).map(x => macKey(x.mac)));
@@ -2030,7 +2092,7 @@ function renderCounts() {
     }));
   }
   const st = (S.state && S.state.status) || {};
-  $('#cntDev').textContent = rows.length || '';
+  $('#cntDev').textContent = devRows().length || '';
   // 徽标 = 同步规则条数。开屏就要有：state 里就有规则清单，不用等防火墙页拉过
   $('#cntFw').textContent = S.wl ? (S.wl.rules || []).length
     : ((S.state && S.state.overview && (S.state.overview.rules || []).length) || '');
@@ -2039,12 +2101,78 @@ function renderCounts() {
   $('#devSub').textContent = st.last_error
     ? ('上次同步失败：' + st.last_error) : '';
 }
+/* Mesh 节点下拉 + 说明条 + 节点卡。
+   三者都只在「拓扑可用且真的分出了组」时出现；否则整块隐藏，界面回到单路由的样子。 */
+function renderMesh() {
+  const bar = $('#devOptBar'), sel = $('#devNode'), box = $('#devNodes');
+  if (!bar || !sel || !box) return;
+  const nodes = meshNodes();
+  if (!nodes.length) {
+    bar.hidden = true; sel.hidden = true; box.hidden = true;
+    box.innerHTML = '';
+    S.devNode = 'all'; S.showNodes = false;
+    return;
+  }
+  const rows = devRows();
+  const statOf = k => {
+    const list = rows.filter(d => nodeKeyOf(d) === k);
+    return { total: list.length, online: list.filter(d => d.active).length,
+             down: list.reduce((s, d) => s + (d.down_kb || 0), 0),
+             up: list.reduce((s, d) => s + (d.up_kb || 0), 0) };
+  };
+  /* 下拉：'main' 一项收下「直连主路由」+「拓扑里没写归属」两类。
+     拓扑里没有 routerSelf 标记时 self 全为假，这里补一项，免得多出来一堆设备无处可筛。 */
+  const opts = [['all', '全部节点（' + rows.length + ' 台）']];
+  const seen = new Set();
+  nodes.forEach(n => {
+    const k = n.self ? 'main' : n.key;
+    if (seen.has(k)) return;
+    seen.add(k);
+    const s = statOf(k);
+    opts.push([k, (n.name || n.mac) + (n.self ? '（本机）' : '') + ' · ' + s.total + ' 台']);
+  });
+  if (!seen.has('main')) {
+    const s = statOf('main');
+    opts.unshift(['main', '主路由 · ' + s.total + ' 台']);
+  }
+  if (S.devNode !== 'all' && !seen.has(S.devNode)) S.devNode = 'all';
+  sel.innerHTML = opts.map(([v, t]) =>
+    '<option value="' + v + '"' + (S.devNode === v ? ' selected' : '') + '>' + escHtml(t) + '</option>').join('');
+  sel.hidden = false;
+  sel.value = S.devNode;
+
+  /* 说明条：把「排除了什么」写出来，免得看起来像设备丢了 */
+  const kids = nodes.filter(n => !n.self);
+  bar.hidden = false;
+  $('#devOptTxt').innerHTML = '<b>已从设备列表排除 ' + kids.length + ' 个 Mesh 节点</b>'
+    + (kids.length ? '（' + kids.map(n => escHtml(n.name || n.mac)).join('、') + '）' : '')
+    + ' · 它们是路由器，不是终端设备';
+
+  box.hidden = !S.showNodes;
+  const cb = $('#devShowNodes');
+  if (cb) cb.checked = !!S.showNodes;
+  box.innerHTML = S.showNodes ? nodes.map(n => {
+    const k = n.self ? 'main' : n.key;
+    const s = statOf(k);
+    return '<div class="mnode' + (S.devNode === k ? ' sel' : '') + '" data-n="' + escHtml(k) + '">'
+      + '<div class="mn"><b title="' + escHtml(n.name || '') + '">' + escHtml(n.name || n.mac) + '</b>'
+      + (n.self ? '<span class="self">本机</span>' : '') + '</div>'
+      + '<div class="mm">' + escHtml(n.model || '') + (n.model ? ' · ' : '') + escHtml(n.mac) + '</div>'
+      + '<div class="ms"><b>' + s.online + ' / ' + s.total + '</b>台在线</div>'
+      + (s.total ? '<div class="mr">↓ ' + fmtRate(s.down) + ' ↑ ' + fmtRate(s.up) + '</div>' : '')
+      + '</div>';
+  }).join('') : '';
+  $$('#devNodes .mnode').forEach(n => n.addEventListener('click', () => {
+    S.devNode = (S.devNode === n.dataset.n) ? 'all' : n.dataset.n;
+    renderMesh(); renderCounts(); renderDevices();
+  }));
+}
 function renderTypeFilter() {
   const sel = $('#devType');
   const cnt = {};
-  devRows().forEach(d => { const t = typeOf(d); cnt[t] = (cnt[t] || 0) + 1; });
+  nodeScoped().forEach(d => { const t = typeOf(d); cnt[t] = (cnt[t] || 0) + 1; });
   const ids = Object.keys(cnt).sort((a, b) => cnt[b] - cnt[a]);
-  sel.innerHTML = '<option value="all">全部类型（' + devRows().length + '）</option>'
+  sel.innerHTML = '<option value="all">全部类型（' + nodeScoped().length + '）</option>'
     + ids.map(t => '<option value="' + t + '">' + (TYPE_NAME[t] || t) + '（' + cnt[t] + '）</option>').join('');
   if (S.devType !== 'all' && !cnt[S.devType]) S.devType = 'all';
   sel.value = S.devType;
@@ -3478,6 +3606,12 @@ try {
 $$('.rc-acts [data-op]').forEach(b => b.addEventListener('click', () => quickOp(b.dataset.op)));
 $('#devQ').addEventListener('input', e => { S.devQuery = e.target.value; renderDevices(); });
 $('#devType').addEventListener('change', e => { S.devType = e.target.value; renderDevices(); });
+$('#devNode').addEventListener('change', e => {
+  S.devNode = e.target.value; renderMesh(); renderCounts(); renderDevices(); renderTypeFilter();
+});
+$('#devShowNodes').addEventListener('change', e => {
+  S.showNodes = e.target.checked; renderMesh();
+});
 
 /* 轻量轮询：只拉内存里的状态（不打路由器） */
 let _pollTimer = null;
