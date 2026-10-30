@@ -4,8 +4,10 @@
 接口与 payload 全部逆向自固件前端（终端页 chunk）：
     改名   POST system/changedevicename {action:"update", data:[{ActualName, ID}]}
     限速   POST app/qosclass_host        （整条 HostInfo 回传，只改三个字段）
-    黑名单 POST ntwk/wlanfilterenhance   （整份 2.4G/5G 配置，W/B 名单一起改）
+    黑名单 POST ntwk/wlanfilterenhance   （{"config2g":{…},"config5g":{…}}，
+                                          名单字段是 WMacFilters / BMacFilters）
 """
+import copy
 import threading
 import unittest
 
@@ -32,26 +34,57 @@ class FakeSyncer:
 
 
 class FakeRouter:
-    def __init__(self, hosts=None, wl=None):
+    """按真机固件的脾气来的假路由器。
+
+    关键点：`ntwk/wlanfilterenhance` 的写入**只认**
+    `{"config2g": {...}, "config5g": {...}}` + `WMacFilters` / `BMacFilters`；
+    形状不对（比如把 GET 那个数组原样丢回去）它会回一个成功响应但什么都不做。
+    这正是 1.2.6 里「加入 / 移出黑名单点了没反应」的根因，所以这里必须照实模拟，
+    否则测试只能证明代码自己自洽，证明不了对固件有效。
+    """
+
+    def __init__(self, hosts=None, wl=None, capacity=256, apply_writes=True):
         self.hosts = hosts if hosts is not None else []
         self.wl = wl if wl is not None else [
-            {"MACAddressControlEnabled": True, "WMACAddresses": [], "BMACAddresses": []},
-            {"MACAddressControlEnabled": True, "WMACAddresses": [], "BMACAddresses": []},
+            {"MACAddressControlEnabled": True, "FrequencyBand": "2.4GHz",
+             "WMACAddresses": [], "BMACAddresses": []},
+            {"MACAddressControlEnabled": True, "FrequencyBand": "5GHz",
+             "WMACAddresses": [], "BMACAddresses": []},
         ]
+        self.capacity = capacity
+        self.apply_writes = apply_writes   # False = 模拟「回成功但不照做」的固件
         self.posts = []
 
     def get(self, name, params=None):
         if name == "HostInfo":
             return self.hosts
         if name == "ntwk/wlanfilterenhance":
-            return self.wl
+            # 每次读都是一份新 JSON，改动只能在 post 之后从 self.wl 里看到
+            return copy.deepcopy(self.wl)
+        if name == "deviceinfo":
+            return {"MacFilterCapacity": self.capacity} if self.capacity else {}
         if name == "device/topology":
             return []
         raise AssertionError("假路由器没实现 GET " + name)
 
     def post(self, name, data=None, wrapped=True, action=None):
         self.posts.append({"name": name, "data": data, "action": action})
+        if name == "ntwk/wlanfilterenhance" and self.apply_writes:
+            self._apply_filter(data)
         return {}
+
+    def _apply_filter(self, data):
+        """像真固件一样解释写入体：只认 config2g/config5g + *Filters。"""
+        if not isinstance(data, dict):
+            return
+        for idx, band in enumerate(self.wl):
+            cfg = data.get("config2g" if idx == 0 else "config5g")
+            if not isinstance(cfg, dict):
+                continue
+            for src, dst in (("WMacFilters", "WMACAddresses"),
+                             ("BMacFilters", "BMACAddresses")):
+                if src in cfg:
+                    band[dst] = cfg[src]
 
 
 def make_node(router):
@@ -229,30 +262,85 @@ class Blacklist(unittest.TestCase):
         self.assertTrue(res["ok"])
         p = r.posts[-1]
         self.assertEqual(p["name"], "ntwk/wlanfilterenhance")
-        for band in p["data"]:
-            macs = [e["MACAddress"] for e in band["BMACAddresses"]]
+        for key in ("config2g", "config5g"):
+            cfg = p["data"][key]
+            macs = [e["MACAddress"] for e in cfg["BMacFilters"]]
             self.assertIn(HOST["MACAddress"], macs)
             self.assertNotIn(HOST["MACAddress"],
-                             [e["MACAddress"] for e in band["WMACAddresses"]])
+                             [e["MACAddress"] for e in cfg["WMacFilters"]])
+
+    def test_payload_matches_firmware_shape(self):
+        """写入体的形状必须和固件一致，否则固件回成功但什么都不做。
+
+        固件 c-9.js changeBlack → createSubmitData 的转换规则：
+        键名以 Addresses 结尾的换成 Filters（并把 MAC 改成 Mac），其余原样带过；
+        整体是 {config2g, config5g} 的对象，不是 GET 那个数组。
+        """
+        wl = [{"ID": "Radio.1.Ssid.1.", "FrequencyBand": "2.4GHz",
+               "MACAddressControlEnabled": True, "MacFilterPolicy": 0,
+               "WMACAddresses": [], "BMACAddresses": []},
+              {"ID": "Radio.2.Ssid.1.", "FrequencyBand": "5GHz",
+               "MACAddressControlEnabled": True, "MacFilterPolicy": 0,
+               "WMACAddresses": [], "BMACAddresses": []}]
+        r = FakeRouter(hosts=[dict(HOST)], wl=wl)
+        make_node(r).set_host_blacklist(HOST["MACAddress"], True)
+        data = r.posts[-1]["data"]
+        self.assertIsInstance(data, dict, "写入体必须是对象，不能是 GET 的数组")
+        self.assertEqual(set(data), {"config2g", "config5g"})
+        for key in ("config2g", "config5g"):
+            cfg = data[key]
+            self.assertIn("BMacFilters", cfg)
+            self.assertIn("WMacFilters", cfg)
+            self.assertNotIn("BMACAddresses", cfg, "GET 的字段名固件不认")
+            self.assertNotIn("WMACAddresses", cfg, "GET 的字段名固件不认")
+        # ID / 频段 / 总开关 / 策略要原样带回去，否则固件会当成整条配置被重置
+        self.assertEqual(data["config2g"]["ID"], "Radio.1.Ssid.1.")
+        self.assertEqual(data["config2g"]["FrequencyBand"], "2.4GHz")
+        self.assertEqual(data["config5g"]["FrequencyBand"], "5GHz")
+        self.assertIs(data["config2g"]["MACAddressControlEnabled"], True)
+        self.assertEqual(data["config5g"]["MacFilterPolicy"], 0)
+
+    def test_bands_are_mapped_by_frequency_not_by_position(self):
+        """即使固件把两个频段顺序反了，也不能把 5G 的配置塞进 config2g。"""
+        wl = [{"FrequencyBand": "5GHz", "MACAddressControlEnabled": True,
+               "WMACAddresses": [], "BMACAddresses": []},
+              {"FrequencyBand": "2.4GHz", "MACAddressControlEnabled": True,
+               "WMACAddresses": [], "BMACAddresses": []}]
+        r = FakeRouter(hosts=[dict(HOST)], wl=wl)
+        make_node(r).set_host_blacklist(HOST["MACAddress"], True)
+        self.assertEqual(r.posts[-1]["data"]["config5g"]["FrequencyBand"], "5GHz")
+        self.assertEqual(r.posts[-1]["data"]["config2g"]["FrequencyBand"], "2.4GHz")
+
+    def test_success_but_no_change_is_reported_as_failure(self):
+        """固件「回成功但不照做」时必须报失败，不能让界面显示已加入。
+
+        这是 1.2.6 的真实故障现场：旧的写入体是 GET 的数组形状，
+        固件收下、回 {}、名单一点没变，界面上却提示成功。
+        """
+        r = FakeRouter(hosts=[dict(HOST)], apply_writes=False)
+        res = make_node(r).set_host_blacklist(HOST["MACAddress"], True)
+        self.assertFalse(res["ok"])
+        self.assertIn("没生效", res["error"])
 
     def test_remove_puts_mac_back_to_whitelist(self):
         r = FakeRouter(hosts=[dict(HOST)])
         n = make_node(r)
         n.set_host_blacklist(HOST["MACAddress"], True)
         n.set_host_blacklist(HOST["MACAddress"], False)
-        for band in r.posts[-1]["data"]:
+        for key in ("config2g", "config5g"):
+            cfg = r.posts[-1]["data"][key]
             self.assertNotIn(HOST["MACAddress"],
-                             [e["MACAddress"] for e in band["BMACAddresses"]])
+                             [e["MACAddress"] for e in cfg["BMacFilters"]])
             self.assertIn(HOST["MACAddress"],
-                          [e["MACAddress"] for e in band["WMACAddresses"]])
+                          [e["MACAddress"] for e in cfg["WMacFilters"]])
 
     def test_idempotent_add(self):
         r = FakeRouter(hosts=[dict(HOST)])
         n = make_node(r)
         n.set_host_blacklist(HOST["MACAddress"], True)
         n.set_host_blacklist(HOST["MACAddress"], True)
-        band = r.posts[-1]["data"][0]
-        self.assertEqual(len([e for e in band["BMACAddresses"]
+        cfg = r.posts[-1]["data"]["config2g"]
+        self.assertEqual(len([e for e in cfg["BMacFilters"]
                               if e["MACAddress"] == HOST["MACAddress"]]), 1)
 
     def test_requires_master_switch(self):
@@ -299,13 +387,26 @@ class Blacklist(unittest.TestCase):
         self.assertTrue(res["ok"], res.get("error"))
 
     def test_capacity_limited(self):
-        full = [{"MACAddress": "00:00:00:00:00:%02X" % i, "HostName": ""} for i in range(32)]
+        """容量看 deviceinfo.MacFilterCapacity（真机 256），不是固件前端老默认的 32。"""
+        full = [{"MACAddress": "00:00:00:00:00:%02X" % (i % 256), "HostName": ""}
+                for i in range(256)]
         wl = [{"MACAddressControlEnabled": True, "WMACAddresses": [], "BMACAddresses": list(full)},
               {"MACAddressControlEnabled": True, "WMACAddresses": [], "BMACAddresses": list(full)}]
         res = make_node(FakeRouter(hosts=[dict(HOST)], wl=wl)).set_host_blacklist(
             HOST["MACAddress"], True)
         self.assertFalse(res["ok"])
         self.assertIn("满", res["error"])
+        self.assertIn("256", res["error"])
+
+    def test_capacity_falls_back_when_device_lacks_field(self):
+        """老固件没有 MacFilterCapacity 时退回 32，避免把上限当成无限。"""
+        full = [{"MACAddress": "00:00:00:00:00:%02X" % i, "HostName": ""} for i in range(32)]
+        wl = [{"MACAddressControlEnabled": True, "WMACAddresses": [], "BMACAddresses": list(full)},
+              {"MACAddressControlEnabled": True, "WMACAddresses": [], "BMACAddresses": list(full)}]
+        res = make_node(FakeRouter(hosts=[dict(HOST)], wl=wl, capacity=0)).set_host_blacklist(
+            HOST["MACAddress"], True)
+        self.assertFalse(res["ok"])
+        self.assertIn("32", res["error"])
 
 
 if __name__ == "__main__":

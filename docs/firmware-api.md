@@ -566,7 +566,7 @@ this.topologyHilinkDevice[e.MACAddress.toUpperCase()] = t
 |---|---|---|
 | `system/changedevicename` | `{action:"update", data:[{ActualName, ID}]}` | 低。名称限制 64 字节 |
 | `app/qosclass_host` | **整条 HostInfo 回传**，只改 `DeviceMax*Rate` / `DeviceDownRateEnable` | 中。字段漏传可能清空配置 |
-| `ntwk/wlanfilterenhance` | 整份 2.4G/5G 配置回传 | **高**。字段名见 §6 风险，写错会踢掉所有已连设备 |
+| `ntwk/wlanfilterenhance` | `{config2g:{…},config5g:{…}}`，名单字段 **`WMacFilters`/`BMacFilters`**（不是 GET 的 `*Addresses`） | **高**。形状不对固件会「回成功但不照做」，见 §6.1；写错会踢掉所有已连设备 |
 | `ntwk/ip6firewall_enable` | 整对象回传 | 中。关掉后 IPv6 全暴露 |
 | `ntwk/ip6firewall_trustlist` | 整数组回传 | 中。漏条目会删规则 |
 | `system/reboot` / `system/delayreboot` | 重启 | **高** |
@@ -662,8 +662,33 @@ more = [
 ]
 ```
 
-- ✅ 字段名就是 **`WMACAddresses` / `BMACAddresses`**（全大写 W/B + Addresses）。
-  固件 JS 里的 `WMacFilters` / `BMacFilters` 是前端 UI 的临时变量名，**不是 API 字段**，别混。
+- ✅ **GET** 的字段名是 `WMACAddresses` / `BMACAddresses`（全大写 W/B + Addresses）。
+- 🚨 **POST 的字段名不一样**：`WMacFilters` / `BMacFilters`。这两个不是前端临时变量，
+  而是**写接口真正认的字段名**（`c-9.js changeBlack` → `createSubmitData` 里做的键名换算：
+  以 `Addresses` 结尾的键 → 换成 `Filters`，同时把 `MAC` 换成 `Mac`；其余字段原样带过）。
+  **照 GET 的数组形状回传，固件会回一个成功响应但什么都不做** —— 1.2.6 的
+  「加入 / 移出黑名单点了没反应」就是这个原因（已在 1.2.7 修正）。
+
+#### 写入体（`POST`，**对象**，不是 GET 那个数组）
+
+```jsonc
+{"data": {
+   "config2g": {"ID": "…Radio.1.Ssid.1.", "FrequencyBand": "2.4GHz",
+                "MACAddressControlEnabled": true, "MacFilterPolicy": 0,
+                "WMacFilters": [{"MACAddress":"…","HostName":"…"}], "BMacFilters": []},
+   "config5g": {"ID": "…Radio.2.Ssid.1.", "FrequencyBand": "5GHz",
+                "MACAddressControlEnabled": true, "MacFilterPolicy": 0,
+                "WMacFilters": [ … ], "BMacFilters": []}},
+ "csrf": {…}}
+```
+
+- 外层 `{"data": …}` 由固件 `main.js commonPost` 统一加（`data` 里没有 `data` 键时套一层）。
+- `config2g` / `config5g` 的键名固件是**按下标**取的（`["config2g","config5g"][i]`），
+  本程序优先看 `FrequencyBand` 决定放哪个键，顺序反了也不会串台。
+- 加入黑名单 = 进 `BMacFilters` + 从 `WMacFilters` 移除；移出黑名单 = 反过来
+  （固件就是这么写的，别自己发明语义）。
+- 两个名单的条数都受 `MacFilterCapacity` 约束（`c-9.js` 里 `BMACAddresses.length > cap`
+  与 `WMACAddresses.length > cap` 各查一次，`cap = MacFilterCapacity || 32`）。
 - **`MacFilterPolicy` 语义（关键）**：
   - `0` = **黑名单模式**（名单里的设备被禁止）—— 真机出厂默认
   - `1` = **白名单模式**（只有名单里的设备能连）
@@ -671,8 +696,7 @@ more = [
     「没有白名单设备」提示；`0 == MacFilterPolicy` 时删除设备会同时清理黑/白两个名单。
   - ⚠️ **白名单模式下往 `BMACAddresses` 加设备，固件会忽略**。
     本程序已加拦截（`set_host_blacklist` 检查 policy，是白名单模式就拒绝并提示）。
-- **`MacFilterCapacity` 真机 = 256**（不是从 JS 推断的 32）；且容量只约束白名单
-  （`MacFilterPolicy && (...)`），黑名单是另一套上限。
+- **`MacFilterCapacity` 真机 = 256**（不是从 JS 推断的 32）；黑白两个名单都受它约束。
 - 真机当前状态：总开关 `true`、`MacFilterPolicy: 0`、白名单各 4 条、黑名单空
   → **本程序的黑名单功能在这台机器上可直接使用**。
 

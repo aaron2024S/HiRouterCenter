@@ -825,6 +825,61 @@ class Node:
                     out.append({"HostName": "", "MACAddress": m})
         return out
 
+    @staticmethod
+    def _band_key(band: dict, idx: int) -> str:
+        """频段 → 写接口的键名。固件按下标发 config2g / config5g，这里优先看频段名。"""
+        freq = str(band.get("FrequencyBand") or band.get("WifiBand") or "").lower()
+        if "5" in freq:
+            return "config5g"
+        if "2" in freq:
+            return "config2g"
+        return "config5g" if idx == 1 else "config2g"
+
+    @classmethod
+    def _filter_payload(cls, bands: list) -> dict:
+        """把 GET 的频段对象改成写接口认的形状。
+
+        固件（c-9.js changeBlack / c-40.js createSubmitData）发的是
+        `{"config2g": {...}, "config5g": {...}}`，**不是** GET 那个数组；
+        而且名单字段要改名：WMACAddresses → WMacFilters、BMACAddresses → BMacFilters。
+
+        照 GET 的形状原样回传，固件会回一个成功响应但什么都不做 ——
+        界面表现为「点了加入黑名单，转一圈，名单里还是没有」。
+        """
+        out = {}
+        for idx, band in enumerate(bands):
+            if not isinstance(band, dict):
+                continue
+            cfg = {}
+            for k, v in band.items():
+                key = str(k)
+                if key.endswith("Addresses"):        # WMACAddresses → WMacFilters
+                    cfg[key[:-len("Addresses")].replace("MAC", "Mac") + "Filters"] = v
+                else:                                # ID / FrequencyBand / 开关 / 策略 原样带过
+                    cfg[key] = v
+            out[cls._band_key(band, idx)] = cfg
+        return out
+
+    def _mac_capacity(self, fallback: int = 32) -> int:
+        """MAC 过滤名单上限。真机在 deviceinfo.MacFilterCapacity（MEDUSA2-BR80 = 256），
+        读不到才用固件前端的老默认值 32。"""
+        try:
+            info = self.router.get("deviceinfo") or {}
+            cap = int(info.get("MacFilterCapacity") or 0)
+            return cap if cap > 0 else fallback
+        except Exception:                        # noqa: BLE001 — 拿不到就用兜底值
+            return fallback
+
+    def _in_blacklist(self, mac: str):
+        """复核用：读一次名单，判断这台设备在不在黑名单里。读不到返回 None（不据此判失败）。"""
+        try:
+            rows = _parse_blacklist(self.router.get("ntwk/wlanfilterenhance"))
+        except Exception as e:                   # noqa: BLE001 — 复核失败不该影响主流程
+            log.warning("复核黑名单失败：%s", e)
+            return None
+        want = str(mac or "").strip().upper()
+        return any(str(r.get("mac") or "").upper() == want for r in rows)
+
     def set_host_blacklist(self, mac: str, on: bool = True) -> dict:
         """加入 / 移出 WiFi MAC 黑名单（2.4G、5G 两份名单要一起改）。
 
@@ -864,9 +919,11 @@ class Node:
             except st.SettingsError:
                 pass
             entry = {"HostName": host_name, "MACAddress": mac}
+            new_bands = []
             for band in bands:
                 if not isinstance(band, dict):
                     continue
+                band = dict(band)            # 不改响应对象本身，免得影响调用方
                 wl = [e for e in self._macs_of(band.get("WMACAddresses"))
                       if e["MACAddress"].upper() != mac]
                 bl = [e for e in self._macs_of(band.get("BMACAddresses"))
@@ -877,15 +934,30 @@ class Node:
                     wl.append(entry)
                 band["WMACAddresses"] = wl
                 band["BMACAddresses"] = bl
-            if on and len(self._macs_of(bands[0].get("BMACAddresses"))) > 32:
-                return {"ok": False, "error": "黑名单已经满了（最多 32 台），先删几台再加"}
+                new_bands.append(band)
+            bands = new_bands
+            field = "BMACAddresses" if on else "WMACAddresses"
+            cap = self._mac_capacity()
+            if len(self._macs_of(bands[0].get(field))) > cap:
+                return {"ok": False,
+                        "error": f"名单已经满了（最多 {cap} 台），先删几台再加"}
+            payload = self._filter_payload(bands)
             try:
-                res = self.router.post("ntwk/wlanfilterenhance", bands)
+                res = self.router.post("ntwk/wlanfilterenhance", payload)
             except RouterError as e:
                 log.warning("下发黑名单失败：%s", e)
                 return {"ok": False, "error": "路由器没有响应，黑名单没下发"}
             if not trustlist.ok(res):
                 return {"ok": False, "error": f"设备拒绝：{res}"}
+            # 复核一次：固件对不认识的字段会「回成功但不照做」，只看返回值会误报成功。
+            # 读不到就当成功（不拿复核结果去否定已经生效的写入）。
+            applied = self._in_blacklist(mac)
+            if applied is not None and applied != bool(on):
+                time.sleep(0.6)                  # 有的固件要一拍才把名单落盘
+                applied = self._in_blacklist(mac)
+            if applied is not None and applied != bool(on):
+                return {"ok": False,
+                        "error": "路由器返回了成功，但名单没有变化，这次操作没生效"}
             return {"ok": True, "blocked": bool(on)}
 
     # 手动操作后按动作挂静默期：刚重启的路由器别马上去读，否则刷一串假失败
