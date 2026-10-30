@@ -408,7 +408,7 @@ RULES=[{"name":"NAS","port":16669,"mac":"00:11:22:AA:BB:CC"},
 
 ```
 ipv6sync/offline/dist/
-├── ipv6sync-1.2.5-amd64-image.tar     51.4 MB   x86_64 NAS（唯一产物）
+├── ipv6sync-<版本>-amd64-image.tar    约 51 MB   x86_64 NAS（唯一产物）
 ├── docker-compose.offline.yml          无 build 段的 compose
 ├── .env.example                        环境变量模板
 ├── SHA256SUMS.txt                      tar 的 sha256
@@ -419,7 +419,7 @@ NAS 上只需要四步：
 
 ```bash
 uname -m                                    # 应该是 x86_64
-docker load -i ipv6sync-1.2.5-amd64-image.tar
+docker load -i ipv6sync-<版本>-amd64-image.tar   # <版本> 换成实际文件名
 mkdir -p data && sudo chown -R 10001:10001 data
 docker compose -f docker-compose.offline.yml up -d   # 先在 yaml 的 environment 里改 ADMIN_PASSWORD
 ```
@@ -592,6 +592,38 @@ python -m unittest discover -s tests -t . -v
 ---
 
 ## 变更记录
+
+### 1.2.6
+设备页一次大改：卡片信息补全、Mesh 子路由可分组可改名，节点卡与设备卡外观统一。
+
+- **设备卡加了一整排信息**：接入方式（有线 / 2.4G / 5G / WiFi7 / 电力线）、在线时长、
+  实时上下行速率、**累计收发流量**、品牌；名字后面的 ✎ 可直接改名（写的是路由器的
+  设备名，手机 App 和路由器后台看到的是同一个）。每张卡底部三个动作：**限速 /
+  屏蔽（加入黑名单）/ 放行**。
+- **子路由不再混进设备列表**：识别依据是拓扑节点 MAC，另外认 `VendorClassID` 里的
+  `router|plcap|repeater`。设备区上方多了「拓扑节点」下拉，选中某个子路由就只看
+  接在它下面的设备；**离线设备和黑名单设备只出现在「全部节点」**——固件的拓扑接口
+  本来也只返回在线设备，硬塞进子路由分组是错的。
+- **节点卡显示回传链路**：子路由到上一级那条线的实际情况，有线显示插口 + 协商速率
+  （`有线 · LAN1 · 2.5G`），无线再补频段与信号（`5G · 1.9G · -47dBm`）。数据取自该
+  子路由自己在 `HostInfo` 里的记录 —— 拓扑接口本身只有 MAC / 名字 / 下挂设备。
+  顺手纠正一个坑：固件后台拓扑页显示的「子路由速率」是把下挂终端的实时流量**累加**，
+  不是链路能力，别拿它当线路速度。
+- **子路由也能改名**：固件 Web 后台把子路由排除在设备列表外，所以没有入口，
+  但它在 `HostInfo` 里就是一条普通记录、带 ID，复用 `system/changedevicename` 即可，
+  节点卡右上角因此多了 ✎。
+- **节点卡与设备卡外观统一**：列断点补齐成同一套五档（`760→2 / 900→3 / 1180→4 /
+  1600→5`，≥1600 时两者都是 5 列），间距、内边距、圆角、背景、边框、字号层级全部对齐。
+  此前 ≥1600 节点卡 4 列而设备卡 5 列，列宽差 72~88px；760~900 反过来差 123px。
+  高度仍按内容走，不硬拉。
+- **修 `MacFilterPolicy` 白名单模式下拉黑无效**：该字段 0 = 黑名单模式、1 = 白名单模式，
+  白名单模式下写黑名单固件会忽略。现在检测到非黑名单模式直接给出人话提示，不再静默失败。
+  容量取 `deviceinfo.MacFilterCapacity`（真机 **256**，固件前端 JS 里的 32 是错的）。
+- **新增固件接口档案 `docs/firmware-api.md`**：真机全量取证 —— 171 条前端路由、
+  107 个只读接口里 56 个可用、HostInfo 56 字段、拓扑结构与语义、IPv6 防火墙 / LAN /
+  WAN / Wi-Fi / 安全 / 写接口风险，以及 40 个功能页与文案包索引。以后加功能先查这份，
+  不用再上真机抓。配套探针脚本收在 `tools/firmware-probe/`。
+- 单测 **406 项**。
 
 ### 1.2.0（大改版）
 - **程序改名 `HiRouterCenter`（华为路由器控制中心）**。当时 Docker 镜像名保持
