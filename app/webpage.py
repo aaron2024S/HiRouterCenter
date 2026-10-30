@@ -290,27 +290,32 @@ a.lnk:hover .go{color:var(--accent-text)}
 .optbar label{display:inline-flex;align-items:center;gap:5px;margin-left:auto;
   cursor:pointer;color:var(--text-4);user-select:none;white-space:nowrap}
 .optbar input{width:13px;height:13px;margin:0;accent-color:var(--accent)}
-.ngrid{display:grid;grid-template-columns:1fr;gap:10px;margin-bottom:12px}
-@media(min-width:760px){.ngrid{grid-template-columns:repeat(3,minmax(0,1fr))}}
+/* 节点网格的列断点 / 间距与 .devgrid 保持一致，只是收尾多留 12px 与下方设备区隔开 */
+.ngrid{display:grid;grid-template-columns:1fr;gap:12px;margin-bottom:12px}
+@media(min-width:760px){.ngrid{grid-template-columns:repeat(2,minmax(0,1fr))}}
+@media(min-width:900px){.ngrid{grid-template-columns:repeat(3,minmax(0,1fr))}}
 @media(min-width:1180px){.ngrid{grid-template-columns:repeat(4,minmax(0,1fr))}}
-.mnode{border:1px solid var(--line-2);border-radius:11px;background:var(--ink-800);
-  padding:10px 11px;cursor:pointer;transition:border-color .14s,background .14s}
-.mnode:hover{border-color:var(--accent-line)}
+@media(min-width:1600px){.ngrid{grid-template-columns:repeat(5,minmax(0,1fr))}}
+/* 节点卡的「外壳」与 .dev 完全同规格：边框/圆角/背景/内边距都对齐，只有内部内容不同 */
+.mnode{display:flex;flex-direction:column;border:1px solid var(--line-1);
+  border-radius:14px;background:var(--ink-700);padding:12px;cursor:pointer;
+  transition:border-color .15s,background .15s}
+.mnode:hover{border-color:var(--line-4)}
 .mnode.sel{border-color:var(--accent-line);background:var(--soft-accent)}
 .mnode .mn{display:flex;align-items:center;gap:6px;min-width:0}
 .mnode .mn b{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
-  font-size:12.5px;font-weight:600;color:var(--text-1)}
+  font-size:13px;font-weight:600;color:var(--text-1)}
 .mnode .mn .self{flex:none;border:1px solid var(--accent-line);border-radius:999px;
   padding:1px 5px;font-size:9.5px;color:var(--accent-text)}
 .mnode .mm{margin-top:2px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
-  font-family:var(--mono);font-size:10.5px;color:var(--text-6)}
-.mnode .ms{display:flex;align-items:baseline;gap:5px;margin-top:7px;
-  font-size:11.5px;color:var(--text-4)}
+  font-family:var(--mono);font-size:11px;color:var(--text-5)}
+.mnode .ms{display:flex;align-items:baseline;gap:5px;margin-top:8px;
+  font-size:11.5px;color:var(--text-5)}
 .mnode .ms b{font-family:var(--mono);font-size:13px;color:var(--text-2)}
-.mnode .mr{margin-top:2px;font-family:var(--mono);font-size:10.5px;color:var(--text-5)}
+.mnode .mr{margin-top:2px;font-family:var(--mono);font-size:11px;color:var(--text-5)}
 /* 节点卡：子路由到上一级那条链路（有线 LAN1 · 2.5G / 5G · 1.9G · -45dBm） */
-.mnode .mlink{display:flex;align-items:center;gap:5px;margin-top:5px;min-width:0;
-  font-family:var(--mono);font-size:10.5px;color:var(--text-5);
+.mnode .mlink{display:flex;align-items:center;gap:5px;margin-top:6px;min-width:0;
+  font-family:var(--mono);font-size:11px;color:var(--text-5);
   overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .mnode .mlink .lk{flex:none;font-family:var(--sans);font-size:9.5px;color:var(--text-4);
   border:1px solid var(--line-2);border-radius:4px;padding:0 4px;line-height:15px}
