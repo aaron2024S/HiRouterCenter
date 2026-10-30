@@ -1116,14 +1116,14 @@ class TestWakeOnLan(unittest.TestCase):
         """/24 直连路由 → 该网段的定向广播，且始终附带全局广播。"""
         routes = [(0xC0A80300, 0xFFFFFF00)]      # 192.168.3.0/24
         with mock.patch.object(wol, "_routes", return_value=routes):
-            got = wol.broadcast_targets("192.168.3.117")
+            got = wol.broadcast_targets("192.168.3.100")
         self.assertEqual(got, ["192.168.3.255", "255.255.255.255"])
 
     def test_broadcast_respects_non_24_prefix(self):
         """/16 网段不能按 /24 猜，要按路由表算。"""
         routes = [(0xC0A80000, 0xFFFF0000)]      # 192.168.0.0/16
         with mock.patch.object(wol, "_routes", return_value=routes):
-            got = wol.broadcast_targets("192.168.3.117")
+            got = wol.broadcast_targets("192.168.3.100")
         self.assertIn("192.168.255.255", got)
         self.assertNotIn("192.168.3.255", got)
 
@@ -1158,7 +1158,7 @@ class TestWakeOnLan(unittest.TestCase):
         with mock.patch.object(wol.socket, "socket", FakeSock), \
                 mock.patch.object(wol, "ROUND_GAP", 0), \
                 mock.patch.object(wol, "_routes", return_value=[]):
-            res = wol.send("3C:7C:3F:11:22:33", "192.168.3.117")
+            res = wol.send("3C:7C:3F:11:22:33", "192.168.3.100")
         self.assertTrue(res["ok"])
         # 2 个目标 × 2 个端口 × 3 轮
         self.assertEqual(res["sent"], 12)
@@ -1401,14 +1401,14 @@ class TestTaskModel(unittest.TestCase):
     def test_clean_wake_devices(self):
         """MAC 归一成 AA:BB:..、重复的去掉、脏 IPv4 丢掉；顺序保持不变。"""
         t = tk.clean_task({"kind": "wake", "at": "07:30", "params": {"devices": [
-            {"mac": "3c-7c-3f-11-22-33", "name": "书房台式机", "ipv4": "192.168.3.117"},
+            {"mac": "3c-7c-3f-11-22-33", "name": "台式机A", "ipv4": "192.168.3.100"},
             {"mac": "3C:7C:3F:11:22:33", "name": "重复的那条"},
             {"mac": "a0b1c2d3e4f5", "name": "客厅电视", "ipv4": "not-an-ip"},
         ]}})
         devs = t["params"]["devices"]
         self.assertEqual([d["mac"] for d in devs],
                          ["3C:7C:3F:11:22:33", "A0:B1:C2:D3:E4:F5"])
-        self.assertEqual(devs[0]["name"], "书房台式机")
+        self.assertEqual(devs[0]["name"], "台式机A")
         self.assertEqual(devs[1]["ipv4"], "")
         self.assertEqual(tk.describe(t), "每天 07:30 → 唤醒 2 台设备")
 
@@ -1509,7 +1509,7 @@ class TestTaskApply(unittest.TestCase):
     # ---- 唤醒设备（多台，间隔发） ----
 
     WAKE_DEVS = [
-        {"mac": "3C:7C:3F:11:22:33", "name": "书房台式机", "ipv4": "192.168.3.117"},
+        {"mac": "3C:7C:3F:11:22:33", "name": "台式机A", "ipv4": "192.168.3.100"},
         {"mac": "A0:B1:C2:D3:E4:F5", "name": "客厅电视", "ipv4": ""},
         {"mac": "11:22:33:44:55:66", "name": "", "ipv4": ""},
     ]
@@ -1530,7 +1530,7 @@ class TestTaskApply(unittest.TestCase):
         self.assertTrue(res["ok"])
         self.assertEqual(len(calls), 3)
         self.assertEqual([c[0] for c in calls], [d["mac"] for d in self.WAKE_DEVS])
-        self.assertEqual(calls[0][1], "192.168.3.117")   # ipv4 用来算定向广播
+        self.assertEqual(calls[0][1], "192.168.3.100")   # ipv4 用来算定向广播
         self.assertEqual(sleeps, [tk.WAKE_GAP, tk.WAKE_GAP])   # 3 台只停 2 次
         self.assertIn("3 台", res["msg"])
 
@@ -1727,7 +1727,7 @@ class TestTaskScheduler(unittest.TestCase):
             s = tk.Tasks(no_router, os.path.join(d, "tasks.json"), clock=_task_clock)
             s.upsert({"kind": "wake", "at": "04:30",
                       "params": {"devices": [
-                          {"mac": "3C:7C:3F:11:22:33", "name": "书房台式机"}]}})
+                          {"mac": "3C:7C:3F:11:22:33", "name": "台式机A"}]}})
             with mock.patch.object(tk.wol, "send",
                                    lambda m, ipv4="": {"ok": True, "sent": 6}):
                 res = s.tick(_epoch(2026, 10, 24, 4, 30))

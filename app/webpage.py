@@ -1740,7 +1740,7 @@ function ruleOf(mac) {
   return rules.find(r => macKey(r.mac) === m) || null;
 }
 /* IPv6 地址归一成「8 段、无前导零」再比：同一个地址有
-   240e:3a5:4801:1600::a1 和 240e:3a5:4801:1600:0:0:0:a1 两种写法，直接比字符串会漏。 */
+   240e:xxxx:xxxx:xxxx::a1 和 240e:xxxx:xxxx:xxxx:0:0:0:a1 两种写法，直接比字符串会漏。 */
 function canonV6(s) {
   let t = String(s == null ? '' : s).trim().toLowerCase().split('%')[0].split('/')[0];
   if (!t) return '';

@@ -45,7 +45,7 @@ def free_port() -> int:
 
 # 测试里的服务全在回环上，而 urllib **默认会读系统代理**（Windows 注册表、
 # 或 HTTP_PROXY 环境变量）。机器上只要配了代理（例如 NAS 环境里常见的
-# http://192.168.3.62:7890），发往 127.0.0.1 的请求也会被丢给代理，代理再回
+# http://192.168.3.200:7890），发往 127.0.0.1 的请求也会被丢给代理，代理再回
 # 一个 502 —— 于是一片 HTTP 用例全部"假失败"，报错还看不出跟代理有关。
 # 这里显式挂一个空 ProxyHandler，彻底绕开代理。
 NO_PROXY_OPENER = urllib.request.build_opener(urllib.request.ProxyHandler({}))
@@ -1044,10 +1044,10 @@ class NodeHostsTest(EnvSandbox):
             self.topology = topology if topology is not None else []
             self.wlan = wlan if wlan is not None else [
                 {"WifiModulename": "WIFI-2.4G",
-                 "BMACAddresses": [{"MACAddress": "04:F1:28:1A:01:73",
+                 "BMACAddresses": [{"MACAddress": "AA:BB:CC:DD:EE:02",
                                     "HostName": "诺基亚6"}]},
                 {"WifiModulename": "WIFI-5G",
-                 "BMACAddresses": [{"MACAddress": "04:F1:28:1A:01:73",
+                 "BMACAddresses": [{"MACAddress": "AA:BB:CC:DD:EE:02",
                                     "HostName": "诺基亚6"}]},
             ]
 
@@ -1062,7 +1062,7 @@ class NodeHostsTest(EnvSandbox):
                      "ParentControlEnable": 1, "MacFilterID": "3",
                      "Ipv6Addrs": [{"Ipv6Addr": "240e:3a4::a1"}]},
                     {"MACAddress": "AA:00:00:00:00:02", "HostName": "旧电脑",
-                     "IPAddress": "192.168.3.9", "Active": "0",
+                     "IPAddress": "192.168.3.101", "Active": "0",
                      "OfflineRecord": "2026-09-26 15:42:10#0#1"},
                     {"MACAddress": "AA:00:00:00:00:03", "HostName": "普通机",
                      "IPAddress": "192.168.3.11", "Active": True,
@@ -1129,7 +1129,7 @@ class NodeHostsTest(EnvSandbox):
         res = self.make().hosts()
         self.assertEqual(len(res["blacklist"]), 1, "同一 MAC 跨 2.4G/5G 应合并去重")
         b = res["blacklist"][0]
-        self.assertEqual(b["mac"], "04:F1:28:1A:01:73")
+        self.assertEqual(b["mac"], "AA:BB:CC:DD:EE:02")
         self.assertEqual(b["name"], "诺基亚6")
         self.assertIn("+", b["band"], "两个频段都拦时应拼在一起")
 

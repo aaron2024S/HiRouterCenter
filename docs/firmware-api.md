@@ -331,7 +331,7 @@ centralCap: "4"
 {"ID":"InternetGatewayDevice.Services.X_IPv6.","Enable":1}
 
 // GET ntwk/ipv6_wan —— WAN 侧 IPv6
-{"X_IPv6DNSServerOne":"240e:5a::6666","X_IPv6DNSServerTwo":"240e:5b::6666",
+{"X_IPv6DNSServerOne":"240e:xxxx::1","X_IPv6DNSServerTwo":"240e:xxxx::2",
  "X_IPv6PrefixLength":64,"X_IPv6AddressingType":"SLAAC",
  "X_IPv6Address":"240e:xxxx:...:xxxx","X_IPv6DefaultGateway":"fe80::...",
  "X_IPv6DNSOverrideAllowed":false,"X_IPv6IsAutoConfig":false,"X_IPv6DNSEnabled":true,
@@ -487,7 +487,7 @@ centralCap: "4"
 
 // GET ntwk/iptv —— IPTV 配置
 {"AutoBindEnable":true,"SlaveList":[{"Active":1,"Bind":false,"MACAddress":"...",
-  "Layer2Interface":"LAN2","HostName":"子路由_主卧"}],
+  "Layer2Interface":"LAN2","HostName":"子路由A"}],
  "PortNum":7,"FixWanPort":0,"VLANEnable":false,"VLANMode":"Custom","Enable":false,
  "AccessType":"Ethernet2","VLANId":1,"VLAN1p":0,"PVC":"PVC:8/35","SnoopingEnable":true}
 
@@ -599,7 +599,7 @@ more = [
    "MacFilterPolicy": 0,
    "ID": "InternetGatewayDevice.X_Config.Wifi.Radio.1.Ssid.1.",
    "FrequencyBand": "2.4GHz",
-   "WMACAddresses": [{"MACAddress":"AA:BB:CC:DD:EE:FF","HostName":"极光盒子7S"}, ...],
+   "WMACAddresses": [{"MACAddress":"AA:BB:CC:DD:EE:FF","HostName":"电视盒子A"}, ...],
    "BMACAddresses": []},
   {"MACAddressControlEnabled": true, "MacFilterPolicy": 0,
    "ID": "InternetGatewayDevice.X_Config.Wifi.Radio.2.Ssid.1.",

@@ -163,7 +163,7 @@ class TestTaskCronScheduler(unittest.TestCase):
     def _wake(self, cron):
         return {"kind": "wake", "name": "夜唤", "cron": cron,
                 "params": {"devices": [{"mac": "AA:BB:CC:DD:EE:FF",
-                                        "name": "测试机", "ipv4": "192.168.3.9"}]}}
+                                        "name": "测试机", "ipv4": "192.168.3.102"}]}}
 
     def test_upsert_cron_and_describe(self):
         r = self.tasks.upsert(self._wake("30 * * * *"))

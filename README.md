@@ -245,7 +245,7 @@ PREVIEW_PORT=9000 PREVIEW_PASSWORD=xxx python preview_console.py
 ```
         ┌──────────────────────── NAS（宿主机） ────────────────────────┐
         │                                                             │
-        │   IPv6: 240e:3a4:48ff:6d10:7173:1ffc:64ed:82c0               │
+        │   IPv6: 240e:xxxx:xxxx:xxxx:xxxx:xxxx:xxxx:xxxx               │
         │              │                                              │
         │              │ ① 发现                                     │
         │   ┌──────────▼───────────────────────────┐                  │
@@ -667,7 +667,7 @@ python -m unittest discover -s tests -t . -v
 
 - **WAN IPv4 显示成网关**：`IPv4Gateway` 排在 `IPv4Addr` 前面，泛扫先捞到网关。
   现在按确定键名取 `IPv4Addr`，`gateway / mask / dns` 一律排除。
-- **WAN IPv6 显示成 DNS 服务器**（240e:5a::6666）：同类问题，现在按确定键名取
+- **WAN IPv6 显示成 DNS 服务器**（240e:xxxx::1）：同类问题，现在按确定键名取
   `IPv6AddrSet / IPv6Addr`，`IPv6DnsServers / IPv6Gateway` 排除。
 - **IPv6 前缀是空的**：原来按「键名带 prefix」没取到，这台固件的下发前缀在
   `IPv6PrefixList` 里，已按真名读取。
@@ -675,8 +675,8 @@ python -m unittest discover -s tests -t . -v
   的 `WifiConfig[]`（每项自带频段与信道），结构化读取，双频合一与 2.4G/5G 信道
   直接拿全，不再靠取值范围猜。
 - **LAN IPv4** 读不到时用管理地址兜底。
-- **规则绑不住设备的根因**：规则里存的是 12 位压缩 MAC（`c4278c728ddf`），
-  设备列表是 `C4:27:8C:72:8D:DF` —— 前端直接比较永远不相等，表现为
+- **规则绑不住设备的根因**：规则里存的是 12 位压缩 MAC（`aabbccddeeff`），
+  设备列表是 `AA:BB:CC:DD:EE:FF` —— 前端直接比较永远不相等，表现为
   规则表显示不出设备名、编辑弹窗永远停在第一台设备。现在按归一化 MAC 比较，
   编辑弹窗能准确定位；绑定的设备不在列表时会显示它的 MAC 而不是误标「不绑定设备」。
 - **设备页「未放行」误判**：① 根因还是 MAC 形态不一致（规则存压缩 MAC、

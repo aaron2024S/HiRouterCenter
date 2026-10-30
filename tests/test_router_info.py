@@ -29,8 +29,8 @@ DEVICEINFO = {
     "SoftwareVersion": "6.1.0.20(V7R2)",
     "HarmonyOSVersion": "6.1.0",
     "UpTime": 3 * 86400 + 4 * 3600 + 14 * 60,
-    "WANMACAddress": "40:06:34:65:84:22",
-    "LANMACAddress": "40:06:34:65:84:22",
+    "WANMACAddress": "AA:BB:CC:DD:EE:FF",
+    "LANMACAddress": "AA:BB:CC:DD:EE:FF",
 }
 
 
@@ -72,9 +72,9 @@ class Wan6Test(unittest.TestCase):
     def test_wan4_unchanged(self):
         r = FakeRouter({
             "deviceinfo": dict(DEVICEINFO),
-            "wan": {"WanIPv4": "58.208.16.212", "DnsServer": "218.2.2.2"},
+            "wan": {"WanIPv4": "1.2.3.4", "DnsServer": "1.2.3.53"},
         })
-        self.assertEqual(router_info.collect(r)["wan4"], "58.208.16.212")
+        self.assertEqual(router_info.collect(r)["wan4"], "1.2.3.4")
 
 
 class VersionTest(unittest.TestCase):
@@ -93,8 +93,8 @@ class VersionTest(unittest.TestCase):
     def test_hardware_mac_uptime(self):
         out = router_info.collect(FakeRouter({"deviceinfo": dict(DEVICEINFO)}))
         self.assertEqual(out["hardware"], "VER.A")
-        self.assertEqual(out["wan_mac"], "40:06:34:65:84:22")
-        self.assertEqual(out["lan_mac"], "40:06:34:65:84:22")
+        self.assertEqual(out["wan_mac"], "AA:BB:CC:DD:EE:FF")
+        self.assertEqual(out["lan_mac"], "AA:BB:CC:DD:EE:FF")
         self.assertEqual(out["uptime"], "3 天 4 小时")
 
 
@@ -186,9 +186,9 @@ class RealQ7Test(unittest.TestCase):
     """
 
     WAN = {
-        "IPv4Gateway": "58.208.16.193",
-        "IPv4DnsServers": "218.2.2.2,218.4.4.4",
-        "IPv4Addr": "58.208.16.212",
+        "IPv4Gateway": "1.2.3.1",
+        "IPv4DnsServers": "1.2.3.53,1.2.3.54",
+        "IPv4Addr": "1.2.3.4",
         "IPv6AddrSet": "240e:3a0:483c:e239:2c4f:9fdb:e3ea:edc7",
         "IPv6Addr": "240e:3a0:483c:e239:2c4f:9fdb:e3ea:edc7/64",
         "IPv6AddrPrefixLen": 64,
@@ -207,7 +207,7 @@ class RealQ7Test(unittest.TestCase):
     def test_wan4_is_address_not_gateway(self):
         out = router_info.collect(FakeRouter({"deviceinfo": dict(DEVICEINFO),
                                              "wan": dict(self.WAN)}))
-        self.assertEqual(out["wan4"], "58.208.16.212")
+        self.assertEqual(out["wan4"], "1.2.3.4")
 
     def test_wan6_is_address_not_dns(self):
         out = router_info.collect(FakeRouter({"deviceinfo": dict(DEVICEINFO),

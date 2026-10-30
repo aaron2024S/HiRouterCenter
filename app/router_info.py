@@ -55,7 +55,7 @@ _V6_ADDR_KEYS = ("ipv6addrset", "ipv6addr", "ipv6address",
 _V6_PREFIX_KEYS = ("ipv6prefixlist", "ipv6prefix", "ipv6pdprefix", "prefixlist")
 # 模糊匹配时一律跳开的词：这些键的值也可能是全球单播地址
 _V6_SKIP = ("dns", "prefix", "gateway", "gw", "server", "dhcp", "radvd")
-# v4 同理：`IPv4Gateway`（58.208.16.193）排在 `IPv4Addr`（58.208.16.212）前面，
+# v4 同理：`IPv4Gateway`（1.2.3.1）排在 `IPv4Addr`（1.2.3.4）前面，
 # 泛扫会把网关当成 WAN 地址 —— 所以 v4 也要走确定键名 + 排除 gateway / mask / dns
 _V4_ADDR_KEYS = ("ipv4addr", "ipv4address", "externalipaddress",
                  "wanipv4addr", "ipv4wanaddr", "ipaddr")
