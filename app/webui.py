@@ -295,6 +295,20 @@ class WebUI:
                 data = _json_body(body)
                 return handler.send_json(self.node.set_host_type(
                     data.get("mac"), data.get("type")))
+            # ---- 设备卡三个动作：改名 / 限速 / 黑名单 ----
+            if method == "POST" and route == "/api/host/rename":
+                data = _json_body(body)
+                return handler.send_json(self.node.rename_host(
+                    data.get("mac"), data.get("name")))
+            if method == "POST" and route == "/api/host/limit":
+                data = _json_body(body)
+                return handler.send_json(self.node.set_host_limit(
+                    data.get("mac"), data.get("up_kbps") or 0,
+                    data.get("down_kbps") or 0))
+            if method == "POST" and route == "/api/host/blacklist":
+                data = _json_body(body)
+                return handler.send_json(self.node.set_host_blacklist(
+                    data.get("mac"), bool(data.get("on", True))))
             # ---- 计划任务（读不需要动作，写全部要求登录 + 同源，已在上方拦过） ----
             if method == "GET" and route == "/api/tasks":
                 return handler.send_json(self.node.tasks_view())

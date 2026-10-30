@@ -61,14 +61,79 @@ def _is_kid(h: dict) -> bool:
     return mfid not in ("", "0")
 
 
+def _iface_of(h: dict) -> str:
+    """接入方式。固件 InterfaceType 的取值：LAN / 2.4GHz / 5GHz / DC / wifi7-mld / PLC。
+
+    这些值是固件自己判定的（有线走 LAN，无线带频段），比自己按 IP 或名字猜可靠。
+    """
+    return str(h.get("InterfaceType") or "").strip()
+
+
+def _brand_of(h: dict) -> str:
+    """设备品牌。固件带两处：DevBrands 是自动识别的，ActualManu 是用户改过的
+    （没改过时值为 "Default"）—— 有手改的就用手改的。"""
+    man = str(h.get("ActualManu") or "").strip()
+    if man and man.lower() != "default":
+        return man
+    return str(h.get("DevBrands") or "").strip()
+
+
+# AccessRecord 在不同固件上有几种写法，能认几种认几种
+_ACCESS_FORMATS = ("%Y-%m-%d %H:%M:%S", "%Y/%m/%d %H:%M:%S", "%Y-%m-%d %H:%M",
+                   "%Y-%m-%dT%H:%M:%S", "%Y%m%d%H%M%S")
+
+
+def _parse_access(raw):
+    """把 AccessRecord 解析成 datetime；认不出来返回 None（界面上就不显示时长）。"""
+    import datetime as _dt
+    txt = str(raw or "").strip()
+    if not txt:
+        return None
+    if txt.isdigit():
+        # 可能是秒或毫秒时间戳
+        v = int(txt)
+        if v > 10 ** 11:
+            v //= 1000
+        try:
+            return _dt.datetime.fromtimestamp(v)
+        except (OverflowError, OSError, ValueError):
+            return None
+    for fmt in _ACCESS_FORMATS:
+        try:
+            return _dt.datetime.strptime(txt, fmt)
+        except ValueError:
+            continue
+    return None
+
+
+def _online_secs(h: dict, now=None):
+    """已在线秒数（AccessRecord 到现在的差值）。取不到就是 None，界面显示占位。"""
+    import datetime as _dt
+    start = _parse_access(h.get("AccessRecord"))
+    if start is None:
+        return None
+    now = now or _dt.datetime.now()
+    try:
+        return max(0, int((now - start).total_seconds()))
+    except TypeError:          # 时区不同无法相减
+        return None
+
+
+def _kbps_of(h: dict, key: str) -> int:
+    """上下行实时速率。固件这就是 KB/s（固件自己显示时 ×8 转成 Kbps）。"""
+    try:
+        return max(0, int(float(h.get(key) or 0)))
+    except (TypeError, ValueError):
+        return 0
+
+
 def _cfg(node) -> object:
     """拿当前配置。
 
     单元测试里会用 `Node.__new__` 只装配 syncer + router（没有 `cfg` 属性），
     所以一律走这个函数，不要直接写 `node.cfg`。
     """
-    try:
-        return node.cfg
+    try:        return node.cfg
     except AttributeError:
         return node.syncer.cfg
 
@@ -511,6 +576,152 @@ class Node:
         devtypes.set_type(self.cfg.state_file, mac, tid or "unknown")
         return {"ok": True, "mac": mac, "type": tid or "unknown"}
 
+    # ---------------- 设备卡上的三个动作 ----------------
+    # 全部逆向自固件前端（chunk 9 = 终端页），接口与 payload 一致：
+    #   改名   POST system/changedevicename {action:"update", data:[{ActualName, ID}]}
+    #   限速   POST app/qosclass_host       （整个 HostInfo 条目，改 DeviceMax*Rate）
+    #   黑名单 POST ntwk/wlanfilterenhance  （整份 2.4G/5G 过滤配置，改 W/B 名单）
+
+    def _host_raw(self, mac: str) -> dict:
+        """按 MAC 取 HostInfo 原始条目（写操作的入参要整条回传，所以不能用精简行）。"""
+        key = str(mac or "").strip().upper()
+        if not key:
+            raise st.SettingsError("缺少设备 MAC")
+        try:
+            hosts = self.router.get("HostInfo") or []
+        except RouterError as e:
+            raise st.SettingsError(f"读不到设备列表：{e}") from e
+        for h in hosts:
+            if str(h.get("MACAddress") or "").strip().upper() == key:
+                return h
+        raise st.SettingsError("设备列表里找不到这台设备，刷新一下再试")
+
+    def rename_host(self, mac: str, name: str) -> dict:
+        """改设备名。写的是路由器的 ActualName —— 手机/路由器后台看到的同一个名字。"""
+        name = str(name or "").strip()
+        if not name:
+            raise st.SettingsError("设备名称不能为空")
+        if len(name) > 20:
+            raise st.SettingsError("设备名称最多 20 个字")
+        with self.syncer.lock:
+            err = self._logged_in()
+            if err:
+                return {"ok": False, "error": err}
+            try:
+                h = self._host_raw(mac)
+                hid = h.get("ID")
+                if hid in (None, ""):
+                    return {"ok": False, "error": "路由器没给出这台设备的编号，改不了名"}
+                res = self.router.post("system/changedevicename",
+                                       [{"ActualName": name, "ID": hid}],
+                                       action="update")
+            except RouterError as e:
+                log.warning("改设备名失败：%s", e)
+                return {"ok": False, "error": "路由器没有响应，改名没成功"}
+            if not trustlist.ok(res):
+                return {"ok": False, "error": f"设备拒绝：{res}"}
+            return {"ok": True, "name": name}
+
+    def set_host_limit(self, mac: str, up_kbps: int = 0, down_kbps: int = 0) -> dict:
+        """按设备限速（QoS）。0 表示不限；两个都为 0 时把这条设备的限速整个关掉。
+
+        走的是固件自己的 qosclass_host：把 HostInfo 整条回传，只改三个字段。
+        """
+        try:
+            up = max(0, int(up_kbps or 0))
+            down = max(0, int(down_kbps or 0))
+        except (TypeError, ValueError):
+            raise st.SettingsError("限速值要填数字") from None
+        if up > 1024 * 1024 or down > 1024 * 1024:
+            raise st.SettingsError("限速值太大了")
+        with self.syncer.lock:
+            err = self._logged_in()
+            if err:
+                return {"ok": False, "error": err}
+            try:
+                item = dict(self._host_raw(mac))
+                item["DeviceMaxUpLoadRate"] = up
+                item["DeviceMaxDownLoadRate"] = down
+                item["DeviceDownRateEnable"] = 1 if (up or down) else 0
+                res = self.router.post("app/qosclass_host", item)
+            except RouterError as e:
+                log.warning("下发限速失败：%s", e)
+                return {"ok": False, "error": "路由器没有响应，限速没下发"}
+            if not trustlist.ok(res):
+                return {"ok": False, "error": f"设备拒绝：{res}"}
+            return {"ok": True, "up_kbps": up, "down_kbps": down}
+
+    @staticmethod
+    def _macs_of(entries) -> list:
+        """把名单里的条目统一成 [{"HostName","MACAddress"}]，纯 MAC 字符串也认。"""
+        out = []
+        for e in entries or []:
+            if isinstance(e, dict):
+                m = str(e.get("MACAddress") or "").strip().upper()
+                if m:
+                    out.append({"HostName": e.get("HostName") or "",
+                                "MACAddress": e.get("MACAddress")})
+            else:
+                m = str(e or "").strip().upper()
+                if m:
+                    out.append({"HostName": "", "MACAddress": m})
+        return out
+
+    def set_host_blacklist(self, mac: str, on: bool = True) -> dict:
+        """加入 / 移出 WiFi MAC 黑名单（2.4G、5G 两份名单要一起改）。
+
+        ⚠️ 这是 WLAN 层的过滤：只对无线设备生效，有线设备不经过它。
+        且必须路由器上「MAC 地址过滤」总开关是开的，否则固件自己也会拒绝。
+        """
+        mac = str(mac or "").strip().upper()
+        if not mac:
+            raise st.SettingsError("缺少设备 MAC")
+        with self.syncer.lock:
+            err = self._logged_in()
+            if err:
+                return {"ok": False, "error": err}
+            try:
+                data = self.router.get("ntwk/wlanfilterenhance")
+            except RouterError as e:
+                log.warning("读 MAC 过滤配置失败：%s", e)
+                return {"ok": False, "error": "读不到路由器的 MAC 过滤配置"}
+            bands = data if isinstance(data, list) else ([data] if isinstance(data, dict) else [])
+            if not bands:
+                return {"ok": False, "error": "路由器的 MAC 过滤配置是空的（这台固件可能不支持）"}
+            head = bands[0] if isinstance(bands[0], dict) else {}
+            if not _truthy(head.get("MACAddressControlEnabled")):
+                return {"ok": False,
+                        "error": "路由器上的「MAC 地址过滤」总开关没开，先打开才能拉黑设备"}
+            host_name = ""
+            try:
+                host_name = discover.host_display_name(self._host_raw(mac))
+            except st.SettingsError:
+                pass
+            entry = {"HostName": host_name, "MACAddress": mac}
+            for band in bands:
+                if not isinstance(band, dict):
+                    continue
+                wl = [e for e in self._macs_of(band.get("WMACAddresses"))
+                      if e["MACAddress"].upper() != mac]
+                bl = [e for e in self._macs_of(band.get("BMACAddresses"))
+                      if e["MACAddress"].upper() != mac]
+                if on:
+                    bl.append(entry)
+                else:
+                    wl.append(entry)
+                band["WMACAddresses"] = wl
+                band["BMACAddresses"] = bl
+            if on and len(self._macs_of(bands[0].get("BMACAddresses"))) > 32:
+                return {"ok": False, "error": "黑名单已经满了（最多 32 台），先删几台再加"}
+            try:
+                res = self.router.post("ntwk/wlanfilterenhance", bands)
+            except RouterError as e:
+                log.warning("下发黑名单失败：%s", e)
+                return {"ok": False, "error": "路由器没有响应，黑名单没下发"}
+            if not trustlist.ok(res):
+                return {"ok": False, "error": f"设备拒绝：{res}"}
+            return {"ok": True, "blocked": bool(on)}
+
     # 手动操作后按动作挂静默期：刚重启的路由器别马上去读，否则刷一串假失败
     _QUIET = {"reboot": 240, "redial": 150, "channel": 60, "wifi_power": 20}
 
@@ -578,6 +789,18 @@ class Node:
                 "kids": _is_kid(h),
                 "type": mtype,
                 "type_manual": is_manual,
+                # ---- 设备卡新增字段（全部来自固件真实返回，缺了就是空/0）----
+                "id": h.get("ID"),
+                "iface": _iface_of(h),
+                "brand": _brand_of(h),
+                "online_secs": _online_secs(h) if active else None,
+                "down_kb": _kbps_of(h, "DownRate") if active else 0,
+                "up_kb": _kbps_of(h, "UpRate") if active else 0,
+                # 当前限速（Kbps）。DeviceDownRateEnable 是总开关，关着就当没限速
+                "limit_up": (_kbps_of(h, "DeviceMaxUpLoadRate")
+                             if _truthy(h.get("DeviceDownRateEnable")) else 0),
+                "limit_down": (_kbps_of(h, "DeviceMaxDownLoadRate")
+                               if _truthy(h.get("DeviceDownRateEnable")) else 0),
             })
         rows.sort(key=lambda r: r["mac"])
         return rows

@@ -289,14 +289,24 @@ a.lnk:hover .go{color:var(--accent-text)}
 .dev:hover{border-color:var(--line-4)}
 .dev.off{opacity:.94}
 .dev.black{border-color:var(--line-warn)}
-.dev-head{display:flex;align-items:flex-start;gap:10px}
-.avatar{display:grid;height:34px;width:34px;flex:none;place-items:center;border-radius:10px;
+.dev-head{display:flex;align-items:center;gap:8px}
+.avatar{display:grid;height:32px;width:32px;flex:none;place-items:center;border-radius:10px;
   border:0;padding:0;background:var(--line-2);color:var(--accent-text);
   font-size:13px;font-weight:600;transition:background .15s,box-shadow .15s}
-.avatar svg.i{width:18px;height:18px;stroke-width:1.6}
+.avatar svg.i{width:17px;height:17px;stroke-width:1.6}
 .dev-head .avatar{cursor:pointer}
 .dev-head .avatar:hover{background:var(--line-3);box-shadow:0 0 0 3px var(--soft-accent)}
 .dev.off .avatar{color:var(--text-4)}
+/* 名字 + 紧随其后的编辑图标（不加按钮外框，悬停才亮） */
+.dev-nrow{display:flex;align-items:center;gap:3px;min-width:0}
+.edt{flex:none;border:0;background:none;padding:1px 3px;border-radius:5px;cursor:pointer;
+  color:var(--text-6);font-size:11px;line-height:1.3;transition:color .14s,background .14s}
+.edt .i{width:12px;height:12px;display:block}
+.edt:hover{color:var(--text-1);background:var(--hover)}
+/* 状态 + 接入方式 + 儿童上网：一律靠右、不换行 */
+.dev-badges{display:flex;flex:none;align-items:center;gap:4px;flex-wrap:nowrap}
+.dev-badges .badge{font-size:9.5px;padding:1px 6px;gap:3px}
+.dev-badges .badge .dot{width:5px;height:5px}
 
 /* 设备类型选择浮层 */
 .tpick-mask{position:fixed;inset:0;z-index:60;background:rgba(3,4,10,.62);
@@ -374,9 +384,10 @@ html[data-theme="light"] .tpick-mask{background:rgba(30,34,56,.34)}
 .dev-id{min-width:0;flex:1}
 .dev-id .n{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
   font-size:13px;font-weight:600}
-.dev-id .m{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
-  font-family:var(--mono);font-size:11px;color:var(--text-5);letter-spacing:.3px}
-.dev-tags{display:flex;flex-wrap:wrap;gap:5px}
+/* MAC · 品牌：缩进到头像后面，与名字左对齐 */
+.dev-mac{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;padding-left:40px;
+  font-size:11px;color:var(--text-5)}
+.dev-mac .m{font-family:var(--mono);letter-spacing:.3px}
 .dev-v6{display:flex;flex-direction:column;gap:4px}
 .v6{display:flex;align-items:center;gap:6px;width:100%;border:1px solid var(--line-2);
   border-radius:8px;background:var(--ink-800);padding:5px 8px;cursor:pointer;
@@ -388,17 +399,23 @@ html[data-theme="light"] .tpick-mask{background:rgba(30,34,56,.34)}
 .v6.copied .i{color:var(--run)}
 .v6 span{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .v6 .first{color:var(--text-2)}
-/* 卡片底部：只读的放行状态 + 唤醒 */
-.dev-foot{display:flex;align-items:center;gap:8px;margin-top:auto;
-  border-top:1px solid var(--line-2);padding-top:10px}
-.dev-foot .fw{display:inline-flex;align-items:center;gap:5px;min-width:0;
-  font-size:11.5px;color:var(--text-5)}
-.dev-foot .fw .i{width:12px;height:12px;flex:none;color:var(--text-6)}
-.dev-foot .fw b{font-weight:400;color:var(--text-3);font-family:var(--mono);font-size:11px;
-  overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.dev-foot .fw.on{color:var(--run-text)}
-.dev-foot .fw.on .i{color:var(--run)}
-.dev-foot .btn{margin-left:auto;flex:none}
+/* 卡片底部：在线时长 / 速率一行，放行状态与三个动作一行。
+   margin-top:auto 把这一块钉到卡片底边 —— IPv6 地址条数不同的卡片，
+   按钮始终压在同一条水平线上。 */
+.dev-foot{margin-top:auto;padding-top:9px}
+.dev-flow{display:flex;align-items:center;gap:7px;flex-wrap:wrap;
+  font-size:11.5px;color:var(--text-5);font-variant-numeric:tabular-nums}
+.dev-flow .dotsep{width:3px;height:3px;border-radius:99px;background:var(--line-4);flex:none}
+.dev-act{display:flex;align-items:center;gap:5px;margin-top:8px;padding-top:9px;
+  border-top:1px solid var(--line-2);flex-wrap:nowrap}
+.dev-act .grow{flex:1 1 auto;min-width:0}
+.dev-act .btn{flex:none;font-size:10.5px;padding:3px 6px;border-radius:7px;gap:3px}
+.dev-act .btn .i{width:11px;height:11px}
+.fwchip{display:inline-flex;align-items:center;gap:3px;flex:none;white-space:nowrap;
+  border:1px solid var(--line-ok);border-radius:999px;background:var(--soft-ok);
+  color:var(--run-text);font-size:9.5px;padding:1px 6px}
+.fwchip b{font-weight:600;font-family:var(--mono);letter-spacing:.2px}
+.fwchip.no{border-color:var(--line-2);background:transparent;color:var(--text-5)}
 
 /* ===== 概览条 ===== */
 .strip{display:grid;grid-template-columns:1fr;gap:16px}
@@ -1675,6 +1692,32 @@ function manualHit(d) {
   if (!addrs.length) return null;
   return ents.find(e => addrs.indexOf(canonV6(e.local_ip)) >= 0) || null;
 }
+/* 已在线时长（AccessRecord 到现在，后端算好给秒数）。取不到时上层不显示这一段。 */
+function fmtDur(sec) {
+  const s = Math.max(0, Math.floor(Number(sec) || 0));
+  if (s < 60) return '不到 1 分钟';
+  const d = Math.floor(s / 86400), hh = Math.floor((s % 86400) / 3600),
+    mm = Math.floor((s % 3600) / 60);
+  if (d) return d + ' 天' + (hh ? ' ' + hh + ' 小时' : '');
+  if (hh) return hh + ' 小时' + (mm ? ' ' + mm + ' 分' : '');
+  return mm + ' 分';
+}
+/* 固件的 UpRate/DownRate 单位就是 KB/s（它自己显示时 ×8 变 Kbps） */
+function fmtRate(kb) {
+  const k = Math.max(0, Math.round(Number(kb) || 0));
+  return k >= 1024 ? (k / 1024).toFixed(1) + ' MB/s' : k + ' KB/s';
+}
+/* 接入方式：对齐固件 InterfaceType。认不出来的宁可不显示，也不往界面上抛内部取值 */
+const IFACE_LABEL = {
+  'LAN': '有线', '2.4GHZ': '2.4G', '5GHZ': '5G', 'WIFI7-MLD': 'WiFi7', 'PLC': '电力线',
+};
+function ifaceKey(d) { return String((d && d.iface) || '').replace(/\s+/g, '').toUpperCase(); }
+function ifaceLabel(d) { return IFACE_LABEL[ifaceKey(d)] || ''; }
+/* 吃 MAC 过滤的只有 WLAN 接入（2.4G / 5G / WiFi7 多链路），有线和电力线管不到 */
+function isWifiHost(d) {
+  const k = ifaceKey(d);
+  return k === '2.4GHZ' || k === '5GHZ' || k === 'WIFI7-MLD';
+}
 function renderDevices() {
   const grid = $('#devGrid');
   const h = S.hosts;
@@ -1697,19 +1740,36 @@ function renderDevices() {
     av.addEventListener('click', () => pickType(d));
     head.appendChild(av);
     const id = el('div', 'dev-id');
-    id.appendChild(el('div', 'n', escHtml(d.name || '未知设备')));
-    id.appendChild(el('div', 'm', escHtml(d.mac || '')));
+    /* 名字 + 紧随其后的编辑图标：不占一整行，也不额外加一个「改名」按钮 */
+    const nrow = el('div', 'dev-nrow');
+    const nm = el('span', 'n', escHtml(d.name || '未知设备'));
+    nm.title = d.name || '';
+    nrow.appendChild(nm);
+    const edt = el('button', 'edt', svgI('edit'));
+    edt.type = 'button';
+    edt.title = '编辑名称';
+    edt.setAttribute('aria-label', '编辑名称');
+    edt.addEventListener('click', () => renameHost(d));
+    nrow.appendChild(edt);
+    id.appendChild(nrow);
     head.appendChild(id);
-    head.appendChild(el('div', '', black
+    /* 状态 + 接入方式 + 儿童上网：一行靠右，顺序固定，不随卡片宽度换行 */
+    const badges = el('div', 'dev-badges');
+    badges.innerHTML = (black
       ? '<span class="badge badge-warn"><span class="dot"></span>黑名单</span>'
       : (d.active ? '<span class="badge badge-run"><span class="dot"></span>在线</span>'
-        : '<span class="badge badge-stop"><span class="dot"></span>离线</span>')));
+        : '<span class="badge badge-stop"><span class="dot"></span>离线</span>'))
+      + (ifaceLabel(d) ? '<span class="badge badge-plain">' + escHtml(ifaceLabel(d)) + '</span>' : '')
+      + (d.kids ? '<span class="badge badge-accent">儿童上网</span>' : '');
+    head.appendChild(badges);
     card.appendChild(head);
 
-    const tags = el('div', 'dev-tags');
-    if (black) tags.innerHTML += '<span class="badge badge-warn">已阻断上网</span>';
-    if (d.kids) tags.innerHTML += '<span class="badge badge-accent">儿童上网</span>';
-    if (tags.innerHTML) card.appendChild(tags);
+    /* MAC · 品牌（品牌来自固件 DevBrands，手改过的以 ActualManu 为准） */
+    const macLine = el('div', 'dev-mac',
+      '<span class="m">' + escHtml(d.mac || '—') + '</span>'
+      + (d.brand ? ' · ' + escHtml(d.brand) : ''));
+    macLine.title = (d.mac || '') + (d.brand ? ' · ' + d.brand : '');
+    card.appendChild(macLine);
 
     /* IPv4（点击复制）—— 改版时丢掉的字段 */
     const meta = el('div', 'dev-meta');
@@ -1758,21 +1818,54 @@ function renderDevices() {
 
     const r = ruleOf(d.mac);
     const hit = r ? null : manualHit(d);
+    /* 放行状态只看结果：放行了就写端口，不再区分「规则」还是「手工」 */
+    const port = r ? r.port
+      : (hit ? (hit.port == null || hit.port === '' ? '全部' : hit.port) : null);
     const foot = el('div', 'dev-foot');
-    const badge = r
-      ? '<span class="fw on" title="有绑定这台设备的同步规则，地址变化会自动跟进">'
-        + svgI('fw6') + '已放行 <b>' + escHtml(r.port) + '</b></span>'
-      : hit
-        ? '<span class="fw on" title="路由器白名单里有这条设备当前地址的条目（不是本程序维护的，地址变了不会自动跟进）">'
-          + svgI('fw6') + '已放行 <b>手工</b></span>'
-        : '<span class="fw" title="没有绑定这台设备的同步规则，路由器白名单里也没有它当前地址的条目">'
-          + svgI('fw6') + '未放行</span>';
-    foot.innerHTML = badge;
-    const wb = el('button', 'btn btn-sm', svgI('power') + '唤醒');
+    /* 在线时长 + 实时上下行。离线设备固件不返回速率，只显示上面那行「最后在线」，
+       不硬凑一个 0 KB/s。 */
+    if (d.active) {
+      const bits = [];
+      if (d.online_secs != null) bits.push('在线 ' + escHtml(fmtDur(d.online_secs)));
+      bits.push('<span title="路由器实时上报的下载速率">↓ ' + escHtml(fmtRate(d.down_kb)) + '</span>');
+      bits.push('<span title="路由器实时上报的上传速率">↑ ' + escHtml(fmtRate(d.up_kb)) + '</span>');
+      foot.appendChild(el('div', 'dev-flow',
+        bits.join('<span class="dotsep"></span>')));
+    }
+    const act = el('div', 'dev-act');
+    act.innerHTML = (port == null
+      ? '<span class="fwchip no" title="路由器 IPv6 白名单里没有这台设备的当前地址">未放行</span>'
+      : '<span class="fwchip" title="路由器 IPv6 白名单里已放行这台设备的当前地址">已放行 <b>'
+        + escHtml(String(port)) + '</b></span>')
+      + '<span class="grow"></span>';
+
+    const wb = el('button', 'btn', '唤醒');
     wb.type = 'button';
     if (d.active) { wb.disabled = true; wb.title = '设备在线，不需要唤醒'; }
+    else wb.title = '给这台设备发 WOL 唤醒包';
     wb.addEventListener('click', () => wake(d));
-    foot.appendChild(wb);
+
+    const lb = el('button', 'btn', '限速');
+    lb.type = 'button';
+    lb.title = '按设备限速（QoS，有线无线都生效）';
+    lb.addEventListener('click', () => limitHost(d));
+
+    /* 黑名单走的是 WiFi MAC 过滤：有线和电力线设备根本不经过无线，管不到 */
+    const wifi = isWifiHost(d);
+    const bb = el('button', 'btn', black ? '移出黑名单' : '加入黑名单');
+    bb.type = 'button';
+    if (!wifi) {
+      bb.disabled = true;
+      bb.title = '黑名单走 WiFi MAC 过滤，有线 / 电力线设备不经过无线，管不到';
+    } else {
+      bb.title = black ? '移出后这台设备可以重新连 WiFi' : '加入后这台设备将无法连接 WiFi';
+      bb.addEventListener('click', () => blacklistHost(d, !black));
+    }
+
+    act.appendChild(wb);
+    act.appendChild(lb);
+    act.appendChild(bb);
+    foot.appendChild(act);
     card.appendChild(foot);
     grid.appendChild(card);
   }
@@ -1787,6 +1880,133 @@ async function wake(d) {
   if (r.throttled) return toast('刚发过', (r.msg || '10 秒内同一台只发一次'), 'clock');
   if (r.ok) toast('唤醒包已发出', (d.name || d.mac) + ' · 开机需要点时间', 'power');
   else errToast(r);
+}
+
+/* ---------------- 设备卡上的三个写操作 ---------------- */
+/* 薄壳弹窗：标题 + 正文 + 取消/确认。确认回调返回接口结果，成功才关窗并刷新设备列表。 */
+function devDialog(cfg) {
+  const mask = el('div', 'tpick-mask');
+  const box = el('div', 'qdlg');
+  box.innerHTML = '<div class="th">' + svgI(cfg.icon || 'knob')
+    + '<span>' + escHtml(cfg.title) + '</span>'
+    + '<button class="btn btn-sm" type="button" data-a="x">关闭</button></div>'
+    + '<div class="qbody">' + cfg.body + '</div>'
+    + '<div class="efoot"><button class="btn" type="button" data-a="x">取消</button>'
+    + '<button class="btn ' + (cfg.danger ? 'btn-danger' : 'btn-primary')
+    + '" type="button" data-a="ok">' + escHtml(cfg.ok || '确定') + '</button></div>';
+  const okBtn = box.querySelector('[data-a="ok"]');
+  function close() { mask.remove(); document.removeEventListener('keydown', onKey); }
+  function onKey(e) { if (e.key === 'Escape') close(); }
+  box.querySelectorAll('[data-a="x"]').forEach(b => b.addEventListener('click', close));
+  mask.addEventListener('click', e => { if (e.target === mask) close(); });
+  document.addEventListener('keydown', onKey);
+  okBtn.addEventListener('click', async () => {
+    const bad = cfg.validate ? cfg.validate(box) : '';
+    if (bad) return toast('还能再改一下', bad, 'alert');
+    okBtn.disabled = true;
+    const r = await cfg.onOk(box).catch(() => null);
+    if (!r) { okBtn.disabled = false; return errToast({ error: '请求没发出去' }); }
+    if (!r.ok) { okBtn.disabled = false; return errToast(r); }
+    close();
+    if (cfg.done) cfg.done(r);
+  });
+  mask.appendChild(box);
+  document.body.appendChild(mask);
+  const first = box.querySelector('.inp');
+  if (first) { first.focus(); if (first.select) first.select(); }
+}
+/* 改设备名：写路由器的 ActualName，手机、路由器后台看到的都是这个名字 */
+function renameHost(d) {
+  devDialog({
+    title: '编辑名称', icon: 'edit', ok: '保存',
+    body: '<div class="efld"><label>设备名称</label>'
+      + '<input class="inp" id="rnName" maxlength="20" value="' + escAttr(d.name || '') + '">'
+      + '<div class="hp">最多 20 个字。写的是路由器的设备名，手机和路由器后台看到的都是它。</div></div>',
+    validate: box => {
+      const v = box.querySelector('#rnName').value.trim();
+      if (!v) return '名称不能为空';
+      if (v.length > 20) return '名称最多 20 个字';
+      return '';
+    },
+    onOk: box => api('/api/host/rename',
+      { mac: d.mac, name: box.querySelector('#rnName').value.trim() }),
+    done: async r => {
+      toast('已改名', (d.name || d.mac) + ' → ' + (r.name || ''), 'check');
+      await loadHosts();
+    },
+  });
+}
+/* 限速：走固件自己的 QoS（qosclass_host），范围 100–1000000 Kbps，留空表示不限 */
+function limitHost(d) {
+  const body = '<p>给这台设备单独限速，有线和无线都生效；两项都留空就是不限速。</p>'
+    + '<div class="egrid2">'
+    + '<div class="efld"><label>下载上限（Kbps）</label>'
+    + '<input class="inp" id="lvDown" type="number" inputmode="numeric" min="100" max="1000000"'
+    + ' step="100" placeholder="不限" value="' + (d.limit_down ? d.limit_down : '') + '"></div>'
+    + '<div class="efld"><label>上传上限（Kbps）</label>'
+    + '<input class="inp" id="lvUp" type="number" inputmode="numeric" min="100" max="1000000"'
+    + ' step="100" placeholder="不限" value="' + (d.limit_up ? d.limit_up : '') + '"></div>'
+    + '</div>'
+    + '<div class="efld"><div class="hp">范围 100–1000000 Kbps（1024 Kbps ≈ 1 Mbps）。'
+    + '路由器上看到的也是这两个数。</div></div>';
+  devDialog({
+    title: '限速 · ' + (d.name || d.mac), icon: 'knob', ok: '应用',
+    body: body,
+    validate: box => {
+      for (const [id, label] of [['#lvDown', '下载'], ['#lvUp', '上传']]) {
+        const raw = box.querySelector(id).value.trim();
+        if (raw === '' || raw === '0') continue;
+        const k = Number(raw);
+        if (!isFinite(k) || k < 100 || k > 1000000)
+          return label + '上限要填 100–1000000 之间的 Kbps 数，留空表示不限';
+      }
+      return '';
+    },
+    onOk: box => {
+      const num = id => {
+        const raw = box.querySelector(id).value.trim();
+        const k = raw === '' || raw === '0' ? 0 : Math.round(Number(raw));
+        return isFinite(k) ? k : 0;
+      };
+      return api('/api/host/limit', { mac: d.mac, up_kbps: num('#lvUp'), down_kbps: num('#lvDown') });
+    },
+    done: async r => {
+      toast(r.up_kbps || r.down_kbps ? '限速已下发' : '已取消限速',
+        (d.name || d.mac) + (r.down_kbps || r.up_kbps
+          ? ' · 下载 ' + fmtRateKbps(r.down_kbps) + ' / 上传 ' + fmtRateKbps(r.up_kbps)
+          : ' · 恢复不限速'), 'knob');
+      await loadHosts();
+    },
+  });
+}
+/* 界面上的限速值用 Kbps 显示，顺手给个 Mbps 的换算，省得自己算 */
+function fmtRateKbps(k) {
+  const v = Math.max(0, Math.round(Number(k) || 0));
+  if (!v) return '不限';
+  return v >= 1024 ? (v / 1024).toFixed(v % 1024 ? 1 : 0) + ' Mbps' : v + ' Kbps';
+}
+/* 加黑名单：WiFi MAC 过滤，2.4G / 5G 两份名单一起改；有线和电力线设备管不到 */
+function blacklistHost(d, on) {
+  if (!on) {
+    devDialog({
+      title: '移出黑名单 · ' + (d.name || d.mac), icon: 'ban', ok: '移出',
+      body: '<p>移出后这台设备可以重新连接 WiFi，下次它自己连上就会回到设备列表。</p>',
+      onOk: () => api('/api/host/blacklist', { mac: d.mac, on: false }),
+      done: async () => { toast('已移出黑名单', d.name || d.mac, 'check'); await loadHosts(); },
+    });
+    return;
+  }
+  devDialog({
+    title: '加入黑名单 · ' + (d.name || d.mac), icon: 'ban', ok: '加入', danger: true,
+    body: '<p>加入后这台设备<b>无法连接 WiFi</b>，当前连接会被断开，要恢复得再来点「移出黑名单」。</p>'
+      + '<div class="desc" style="margin-top:10px">走的是路由器「MAC 地址过滤」总开关，'
+      + '它必须是打开的，否则路由器会拒绝这次操作。</div>',
+    onOk: () => api('/api/host/blacklist', { mac: d.mac, on: true }),
+    done: async () => {
+      toast('已加入黑名单', (d.name || d.mac) + ' · 将无法连接 WiFi', 'ban');
+      await loadHosts();
+    },
+  });
 }
 function renderCounts() {
   const rows = devRows();
