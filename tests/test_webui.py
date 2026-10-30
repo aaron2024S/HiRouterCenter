@@ -1168,6 +1168,57 @@ class NodeHostsTest(EnvSandbox):
         self.assertEqual(_parse_blacklist({}), [])
 
 
+class NodeHostsCostTest(EnvSandbox):
+    """设备列表一次刷新到底打几个路由器接口 —— 钉住上限，防止以后又悄悄多拉。
+
+    `lan_prefixes()` 曾经自己又 `router.get("HostInfo")` 拉了一遍，为了算 LAN
+    前缀把同一份 43KB 传了两次。现在它复用 `hosts()` 已经读到的那份，这条测试
+    就是钉住这个约定：谁再在原地补一次读取，这里立刻红。
+    """
+
+    class CountingR(NodeHostsTest.FakeR):
+        def __init__(self, **kw):
+            super().__init__(**kw)
+            self.calls = []
+
+        def check_session(self):
+            self.calls.append("check_session")
+            return True
+
+        def get(self, name, params=None):
+            self.calls.append(name)
+            return super().get(name, params)
+
+    def _node(self) -> Node:
+        node = Node.__new__(Node)
+        cfg = Config(host="192.168.3.1", username="admin", password="x",
+                     session_file=None, rules=[])
+        node.router = self.CountingR()
+        node.syncer = Syncer(cfg, node.router)
+        return node
+
+    def test_hostinfo_read_once(self):
+        node = self._node()
+        res = node.hosts()
+        self.assertTrue(res["ok"])
+        self.assertEqual(node.router.calls.count("HostInfo"), 1,
+                         "HostInfo 真机 43KB，同一轮只能拉一次")
+
+    def test_lan_prefixes_still_correct(self):
+        """省钱不能省掉功能：复用数据后前缀照样算得出来。"""
+        node = self._node()
+        res = node.hosts()
+        self.assertEqual(res["lan_prefixes"], ["240e:3a4::/64"])
+
+    def test_reuses_given_hosts_without_reading(self):
+        """直接给它一份 HostInfo 时，一个请求都不该发。"""
+        r = self.CountingR()
+        raw = [{"MACAddress": "AA:00:00:00:00:09", "Active": 1,
+                "Ipv6Addrs": [{"Ipv6Addr": "240e:9::5"}]}]
+        self.assertEqual(discover.lan_prefixes(r, hosts=raw), ["240e:9::/64"])
+        self.assertEqual(r.calls, [])
+
+
 class NodeTrafficTest(EnvSandbox):
     """Node.traffic()：设备页每 5 秒拉一次的轻量读数。
 

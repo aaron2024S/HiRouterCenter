@@ -2767,8 +2767,21 @@ $('#btnAddRule').addEventListener('click', () => {
   if (!S.wl || !S.wl.ok) return toast('还读不到设备列表', '先让它连上路由器', 'alert');
   ruleDialog(null);
 });
-$('#btnRefreshFw').addEventListener('click', loadFirewall);
-$('#btnRefreshDev').addEventListener('click', () => { loadInfo(); loadHosts(); });
+/* 刷新按钮防连点：点一次就是十几个路由器请求（还要抢同步锁），连点会把它们
+   排成队、顺带把后台同步挤到后面。点下去立刻禁用 —— 按钮变淡就是「已经点到了」
+   的反馈，比静默忽略好；跑完再留一小段冷却，避免用户以为没反应又补一下。 */
+function bindRefresh(sel, run) {
+  const b = $(sel);
+  if (!b) return;
+  b.addEventListener('click', async () => {
+    if (b.disabled) return;
+    b.disabled = true;
+    try { await run(); }
+    finally { setTimeout(() => { b.disabled = false; }, 600); }
+  });
+}
+bindRefresh('#btnRefreshFw', loadFirewall);
+bindRefresh('#btnRefreshDev', async () => { await loadInfo(); await loadHosts(); });
 
 /* ==========================================================================
    计划任务

@@ -375,6 +375,12 @@ def _wifi(router) -> tuple[dict, dict]:
         if not isinstance(body, (dict, list)):
             continue
         if _wifi_struct(body, names, chans):
+            # 结构化字段已经把两个频段都给了（真机 `WlanGuideBasic` 就是这种，
+            # 一条 2.4GHz 一条 5GHz）—— 再问后面 6 个接口纯属白跑，而且它们
+            # 在真机路由表里根本不存在，每次都是 404。
+            # 只拿到部分频段（单频机型 / 固件只回一条）时才继续往下试。
+            if names["2.4G"] and names["5G"]:
+                break
             continue
         for k, v in _walk(body):
             ks = str(k).lower()

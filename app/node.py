@@ -1180,7 +1180,7 @@ class Node:
                     "blacklist": blacklist, "blacklist_error": bl_error,
                     # Mesh 分组：ok=False 表示这台固件没有可用拓扑（前端隐藏下拉）
                     "mesh": mesh,
-                    "lan_prefixes": discover.lan_prefixes(self.router),
+                    "lan_prefixes": discover.lan_prefixes(self.router, hosts=raw_hosts),
                     "entries": entries,
                     # 规则列表顺手带上（纯内存，不额外请求路由器）：
                     # 设备卡上「已放行 xxx」就靠它和设备 MAC 对上

@@ -252,10 +252,15 @@ def host_candidates(host: dict) -> list[str]:
     return out
 
 
-def lan_prefixes(router, plen: int = 64) -> list[str]:
-    """收集路由器当前下发的 LAN 全局前缀（从各在线主机的地址推导）。"""
+def lan_prefixes(router, plen: int = 64, hosts=None) -> list[str]:
+    """收集路由器当前下发的 LAN 全局前缀（从各在线主机的地址推导）。
+
+    `hosts` 传了就复用调用方已经读到的 HostInfo：真机这份响应 43KB，
+    为了算前缀再拉一遍纯属浪费（设备列表页一次刷新会因此多传 43KB）。
+    """
     prefixes = set()
-    for h in router.get("HostInfo") or []:
+    raw = hosts if hosts is not None else (router.get("HostInfo") or [])
+    for h in raw:
         for a in host_candidates(h):
             try:
                 net = ipaddress.IPv6Network(f"{a}/{plen}", strict=False)

@@ -16,8 +16,10 @@ class FakeRouter:
 
     def __init__(self, data=None):
         self.data = data or {}
+        self.calls = []
 
     def get(self, name, params=None):
+        self.calls.append(name)
         if name not in self.data:
             raise RuntimeError("404")
         return self.data[name]
@@ -256,6 +258,49 @@ class RealQ7Test(unittest.TestCase):
         }))
         self.assertEqual(out["channels"], {"2.4G": 6, "5G": 149})
         self.assertEqual(out["ssid"], {"2.4G": "A", "5G": "B"})
+
+
+class WifiProbeCostTest(unittest.TestCase):
+    """WiFi 信息只该问必要的接口。
+
+    真机 `ntwk/WlanGuideBasic`（短名 `wlanbasic`，排在 `_WIFI_PATHS` 第一位）
+    一次就返回 2.4GHz + 5GHz 两条 `WifiConfig`，SSID 和信道都齐。以前用的是
+    `continue`，等于把剩下 6 个接口全试一遍 —— 那 6 个在真机 171 条路由表里
+    根本不存在，每次都是 404 白跑。
+    """
+
+    TWO_BANDS = {"WifiConfig": [
+        {"WifiSsid": "HOME", "FrequencyBand": "2.4GHz", "Channel": 1,
+         "ID": "InternetGatewayDevice.X_Config.Wifi.Radio.1.Ssid.1."},
+        {"WifiSsid": "HOME", "FrequencyBand": "5GHz", "Channel": 44,
+         "ID": "InternetGatewayDevice.X_Config.Wifi.Radio.2.Ssid.1."},
+    ]}
+
+    def test_stops_after_both_bands(self):
+        r = FakeRouter({"wlanbasic": self.TWO_BANDS})
+        ssid, chans = router_info._wifi(r)
+        self.assertEqual(r.calls, ["wlanbasic"],
+                         "两个频段都拿到了，不该再试后面 6 个接口")
+        self.assertEqual(ssid, {"双频合一": "HOME"})
+        self.assertEqual(chans, {"2.4G": 1, "5G": 44})
+
+    def test_keeps_probing_when_only_one_band(self):
+        """只回了一个频段（单频机型）时仍要往下试，保持原来的兼容行为。"""
+        r = FakeRouter({"wlanbasic": {"WifiConfig": [
+            {"WifiSsid": "HOME", "FrequencyBand": "2.4GHz", "Channel": 6}]}})
+        router_info._wifi(r)
+        self.assertGreater(len(r.calls), 1, "只拿到 2.4G，5G 还得继续找")
+
+    def test_no_struct_still_scans_generic(self):
+        """没有 WifiConfig 的老固件走泛扫路径，不能因为提前 break 而丢掉。"""
+        r = FakeRouter({
+            "deviceinfo": dict(DEVICEINFO),
+            "wlanadv": {"SsidName5G": "HOME-5G", "SsidName24G": "HOME",
+                        "Channel5G": 149, "Channel24G": 6},
+        })
+        out = router_info.collect(r)
+        self.assertEqual(out["ssid"], {"2.4G": "HOME", "5G": "HOME-5G"})
+        self.assertEqual(out["channels"], {"2.4G": 6, "5G": 149})
 
 
 if __name__ == "__main__":
