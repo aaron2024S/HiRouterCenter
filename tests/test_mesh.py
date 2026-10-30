@@ -283,5 +283,56 @@ class MeshViewTest(unittest.TestCase):
                 self.assertIn(row["node"], keys)
 
 
+class NodeLinkTest(unittest.TestCase):
+    """节点卡上的「回传链路」：子路由自己那条 HostInfo 里的连接方式与协商速率。
+
+    字段依据真机（Q7 网线版，4 个子路由全走网线）：
+        InterfaceType=LAN  Layer2Interface=LAN1…LAN4  rate=2500  PhyType=2500  rssi=0
+    拓扑接口本身只给 MAC / 名字 / 下挂设备，链路信息一概没有 —— 只能从这里取。
+    主路由在 HostInfo 里**没有记录**（它自己就是本机），所以这四个字段必须为空，
+    前端据此不画链路行。
+    """
+
+    def _hosts(self):
+        return [
+            # 有线子路由：插在 LAN1，2.5G 口
+            {"MACAddress": LIVING_MAC, "HostName": "客厅子路由", "Active": 1,
+             "InterfaceType": "LAN", "Layer2Interface": "LAN1",
+             "rate": 2500, "PhyType": 2500, "rssi": 0,
+             "ID": "InternetGatewayDevice.LANDevice.1.Hosts.Host.12."},
+            # 无线回传：5G，协商 1921，信号是负数（不能被夹到 0）
+            {"MACAddress": BED_MAC, "HostName": "卧室子路由", "Active": 1,
+             "InterfaceType": "5GHZ", "rate": "1921", "rssi": "-47",
+             "ID": "InternetGatewayDevice.LANDevice.1.Hosts.Host.28."},
+        ]
+
+    def _view(self):
+        hosts = self._hosts()
+        n = make_node(FakeRouter(hosts=hosts, topology=sample_topology()))
+        return {x["key"]: x for x in n._mesh_view(hosts)["nodes"]}
+
+    def test_wired_link_carries_port_and_rate(self):
+        n = self._view()[nd.discover.norm_mac(LIVING_MAC)]
+        self.assertEqual(n["iface"], "LAN")
+        self.assertEqual(n["layer2"], "LAN1")
+        self.assertEqual(n["rate"], 2500)
+        self.assertEqual(n["rssi"], 0)
+        self.assertTrue(n["id"])                 # 有 ID 才改得了名
+
+    def test_wireless_link_keeps_negative_rssi(self):
+        n = self._view()[nd.discover.norm_mac(BED_MAC)]
+        self.assertEqual(n["iface"], "5GHZ")
+        self.assertEqual(n["layer2"], "")
+        self.assertEqual(n["rate"], 1921)        # 字符串也能认
+        self.assertEqual(n["rssi"], -47)         # 负数原样保留
+
+    def test_main_router_has_no_link(self):
+        """主路由在 HostInfo 里没有记录 → 链路字段全空，前端不画那一行。"""
+        n = self._view()[nd.discover.norm_mac(MAIN_MAC)]
+        self.assertTrue(n["self"])
+        self.assertEqual((n["iface"], n["layer2"], n["rate"], n["rssi"], n["id"]),
+                         ("", "", 0, 0, ""))
+
+
 if __name__ == "__main__":
     unittest.main()

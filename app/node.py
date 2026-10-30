@@ -128,6 +128,22 @@ def _kbps_of(h: dict, key: str) -> int:
         return 0
 
 
+def _positive_int(v) -> int:
+    """取非负整数（协商速率、端口能力这类）。坏值当 0。"""
+    try:
+        return max(0, int(float(v or 0)))
+    except (TypeError, ValueError):
+        return 0
+
+
+def _signed_int(v) -> int:
+    """取带符号整数（无线信号强度是负数，不能像速率那样夹到 0）。"""
+    try:
+        return int(float(v or 0))
+    except (TypeError, ValueError):
+        return 0
+
+
 def _cfg(node) -> object:
     """拿当前配置。
 
@@ -716,8 +732,13 @@ class Node:
     #   黑名单 POST ntwk/wlanfilterenhance  （整份 2.4G/5G 过滤配置，改 W/B 名单）
 
     def _host_raw(self, mac: str) -> dict:
-        """按 MAC 取 HostInfo 原始条目（写操作的入参要整条回传，所以不能用精简行）。"""
-        key = str(mac or "").strip().upper()
+        """按 MAC 取 HostInfo 原始条目（写操作的入参要整条回传，所以不能用精简行）。
+
+        比较一律走 norm_mac：设备卡传的是 HostInfo 里的原样值，而 Mesh 节点卡传的是
+        我们自己格式化的 `AA:BB:CC:DD:EE:FF` —— 固件有的版本用横杠或用 12 位裸 hex，
+        按字符串直接比会匹配不上。
+        """
+        key = discover.norm_mac(str(mac or ""))
         if not key:
             raise st.SettingsError("缺少设备 MAC")
         try:
@@ -725,12 +746,16 @@ class Node:
         except RouterError as e:
             raise st.SettingsError(f"读不到设备列表：{e}") from e
         for h in hosts:
-            if str(h.get("MACAddress") or "").strip().upper() == key:
+            if discover.norm_mac(str(h.get("MACAddress") or "")) == key:
                 return h
         raise st.SettingsError("设备列表里找不到这台设备，刷新一下再试")
 
     def rename_host(self, mac: str, name: str) -> dict:
-        """改设备名。写的是路由器的 ActualName —— 手机/路由器后台看到的同一个名字。"""
+        """改设备名。写的是路由器的 ActualName —— 手机 App 里看到的同一个名字。
+
+        子路由也走这里：它在固件里同样是 HostInfo 的一条记录（只是被 Web 后台
+        藏起来了），只要那条记录带 ID 就能改。
+        """
         name = str(name or "").strip()
         if not name:
             raise st.SettingsError("设备名称不能为空")
@@ -970,7 +995,23 @@ class Node:
                     or ("主路由" if n["self"] else "") or n["mac"])
             out.append({"key": n["key"], "mac": n["mac"], "name": name,
                         "model": n["model"], "self": n["self"],
-                        "parent": n["parent"]})
+                        "parent": n["parent"],
+                        # ---- 回传链路：子路由到上一级那条线的实际情况 ----
+                        # 全部取自 HostInfo 里**这台子路由自己**的记录（拓扑接口
+                        # 只给 MAC / 名字 / 下挂设备，没有任何链路信息）：
+                        #   iface   LAN / 2.4GHZ / 5GHZ / PLC …
+                        #   layer2  插在上一级的哪个口（LAN1…LAN4），只有有线才有
+                        #   rate    协商速率，单位 Mbps（真机有线子路由 2500）
+                        #   rssi    无线回传的信号强度，负数，有线恒为 0
+                        # 主路由在 HostInfo 里没有记录（它自己就是本机），这四项全空。
+                        "iface": _iface_of(h) if h else "",
+                        "layer2": str(h.get("Layer2Interface") or "").strip(),
+                        "rate": _positive_int(h.get("rate")),
+                        "rssi": _signed_int(h.get("rssi")),
+                        # 改名要用的固件内部编号（Nodes.Host.12. 这种），
+                        # 有它才能改子路由的名字 —— 手机 App 里也是改这一条。
+                        "id": str(h.get("ID") or "").strip(),
+                        })
         return {"ok": True, "grouped": mesh["grouped"], "nodes": out}
 
     def _host_rows(self, raw_hosts=None) -> list[dict]:

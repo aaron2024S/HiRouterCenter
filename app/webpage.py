@@ -308,6 +308,14 @@ a.lnk:hover .go{color:var(--accent-text)}
   font-size:11.5px;color:var(--text-4)}
 .mnode .ms b{font-family:var(--mono);font-size:13px;color:var(--text-2)}
 .mnode .mr{margin-top:2px;font-family:var(--mono);font-size:10.5px;color:var(--text-5)}
+/* 节点卡：子路由到上一级那条链路（有线 LAN1 · 2.5G / 5G · 1.9G · -45dBm） */
+.mnode .mlink{display:flex;align-items:center;gap:5px;margin-top:5px;min-width:0;
+  font-family:var(--mono);font-size:10.5px;color:var(--text-5);
+  overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.mnode .mlink .lk{flex:none;font-family:var(--sans);font-size:9.5px;color:var(--text-4);
+  border:1px solid var(--line-2);border-radius:4px;padding:0 4px;line-height:15px}
+.mnode .mlink .lv{flex:none;color:var(--accent-text);font-weight:600}
+.mnode .mn .edt{flex:none;margin-left:auto;width:16px;height:16px}
 .devgrid{display:grid;grid-template-columns:1fr;gap:12px}
 @media(min-width:760px){.devgrid{grid-template-columns:repeat(2,minmax(0,1fr))}}
 @media(min-width:900px){.devgrid{grid-template-columns:repeat(3,minmax(0,1fr))}}
@@ -1776,6 +1784,13 @@ function fmtRate(kb) {
   const k = Math.max(0, Math.round(Number(kb) || 0));
   return k >= 1024 ? (k / 1024).toFixed(1) + ' MB/s' : k + ' KB/s';
 }
+/* 链路协商速率：固件 rate 字段单位就是 Mbps（2500 = 2.5G 口）。
+   和上面的 fmtRate 不是一回事，别混：那个是实时流量，这个是端口能力。 */
+function fmtLink(mbps) {
+  const v = Math.max(0, Math.round(Number(mbps) || 0));
+  if (!v) return '';
+  return v >= 1000 ? (v / 1000).toFixed(v % 1000 ? 1 : 0) + 'G' : v + 'M';
+}
 /* 累计流量：固件 RxKBytes / TxKBytes 的单位是 KB，按量级换到 MB / GB */
 function fmtBytes(kb) {
   const k = Math.max(0, Math.round(Number(kb) || 0));
@@ -2007,7 +2022,7 @@ function renameHost(d) {
     title: '编辑名称', icon: 'edit', ok: '保存',
     body: '<div class="efld"><label>设备名称</label>'
       + '<input class="inp" id="rnName" maxlength="20" value="' + escAttr(d.name || '') + '">'
-      + '<div class="hp">最多 20 个字。写的是路由器的设备名，手机和路由器后台看到的都是它。</div></div>',
+      + '<div class="hp">最多 20 个字。写的是路由器里存的名字，手机 App 里看到的也是它。</div></div>',
     validate: box => {
       const v = box.querySelector('#rnName').value.trim();
       if (!v) return '名称不能为空';
@@ -2127,6 +2142,23 @@ function renderCounts() {
 }
 /* Mesh 节点下拉 + 说明条 + 节点卡。
    三者都只在「拓扑可用且真的分出了组」时出现；否则整块隐藏，界面回到单路由的样子。 */
+/* 节点卡上的「回传链路」一行：这台子路由是拿什么、多快连到上一级的。
+   数据来自**该子路由自己**那条 HostInfo —— 拓扑接口只给 MAC/名字/下挂设备，
+   没有任何链路信息。有线显示插口（LAN1…）和协商速率，无线再补信号强度。
+   主路由不显示：它是本机，谈不上「连到上一级」。 */
+function nodeLink(n) {
+  if (n.self) return '';
+  const k = ifaceKey(n);
+  const bits = [];
+  if (IFACE_LABEL[k]) bits.push('<span class="lk">' + IFACE_LABEL[k] + '</span>');
+  if (k === 'LAN' && n.layer2) bits.push('<span>' + escHtml(String(n.layer2).toUpperCase()) + '</span>');
+  const sp = fmtLink(n.rate);
+  if (sp) bits.push('<span class="lv">' + sp + '</span>');
+  if (k !== 'LAN' && n.rssi) bits.push('<span>' + Number(n.rssi) + 'dBm</span>');
+  if (!bits.length) return '';
+  return '<div class="mlink" title="子路由到主路由这条链路的实际连接方式">'
+    + bits.join(' · ') + '</div>';
+}
 function renderMesh() {
   const bar = $('#devOptBar'), sel = $('#devNode'), box = $('#devNodes');
   if (!bar || !sel || !box) return;
@@ -2185,10 +2217,15 @@ function renderMesh() {
   box.innerHTML = S.showNodes ? nodes.map(n => {
     const k = n.self ? 'main' : n.key;
     const s = statOf(k);
-    return '<div class="mnode' + (S.devNode === k ? ' sel' : '') + '" data-n="' + escHtml(k) + '">'
-      + '<div class="mn"><b title="' + escHtml(n.name || '') + '">' + escHtml(n.name || n.mac) + '</b>'
-      + (n.self ? '<span class="self">本机</span>' : '') + '</div>'
+    return '<div class="mnode' + (S.devNode === k ? ' sel' : '') + '" data-n="' + escAttr(k) + '">'
+      + '<div class="mn"><b title="' + escAttr(n.name || '') + '">' + escHtml(n.name || n.mac) + '</b>'
+      + (n.self ? '<span class="self">本机</span>' : '')
+      + (n.self ? '' : '<button class="edt" type="button" data-mac="' + escAttr(n.mac)
+        + '" data-name="' + escAttr(n.name || '') + '" title="改这台子路由的名字">'
+        + svgI('edit') + '</button>')
+      + '</div>'
       + '<div class="mm">' + escHtml(n.model || '') + (n.model ? ' · ' : '') + escHtml(n.mac) + '</div>'
+      + nodeLink(n)
       + '<div class="ms"><b>' + s.n + '</b> 台在线</div>'
       + (s.n ? '<div class="mr">↓ ' + fmtRate(s.down) + ' ↑ ' + fmtRate(s.up) + '</div>' : '')
       + '</div>';
@@ -2196,6 +2233,12 @@ function renderMesh() {
   $$('#devNodes .mnode').forEach(n => n.addEventListener('click', () => {
     S.devNode = (S.devNode === n.dataset.n) ? 'all' : n.dataset.n;
     renderMesh(); renderCounts(); renderDevices();
+  }));
+  /* ✎ 改子路由名字：和设备卡走同一个接口（固件里子路由也是一条 Host 记录，
+     只是 Web 后台把它的入口藏起来了，手机 App 里能改的正是这个名字） */
+  $$('#devNodes .edt').forEach(b => b.addEventListener('click', e => {
+    e.stopPropagation();          // 别把「点卡片 = 筛选」也触发了
+    renameHost({ mac: b.dataset.mac, name: b.dataset.name });
   }));
 }
 function renderTypeFilter() {

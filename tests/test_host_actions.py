@@ -164,6 +164,31 @@ class Rename(unittest.TestCase):
             make_node(FakeRouter(hosts=[dict(HOST)])).rename_host("11:22:33:44:55:66", "x")
         self.assertIn("找不到这台设备", str(ctx.exception))
 
+    def test_sub_router_rename(self):
+        """子路由也能改名 —— 手机 App 里能改的就是这个名字。
+
+        子路由在固件里同样是 HostInfo 的一条记录（VendorClassID=router，
+        ID 是 Hosts.Host.N. 这种设备路径），所以复用同一个接口即可；
+        我们只是没把它放进设备列表，节点卡上单独给入口。
+        真机字段：IsSlave/IsSetupSlave、HiLinkDevice=True、ID 是完整路径。
+        """
+        sub = {
+            "ID": "InternetGatewayDevice.LANDevice.1.Hosts.Host.12.",
+            "MACAddress": "AA:BB:CC:DD:EE:09", "HostName": "子路由-02",
+            "ActualName": "", "Active": 1, "VendorClassID": "router",
+            "HiLinkDevice": True, "IsSlave": True, "IsSetupSlave": False,
+            "InterfaceType": "LAN", "Layer2Interface": "LAN1", "rate": 2500,
+        }
+        r = FakeRouter(hosts=[sub])
+        res = make_node(r).rename_host("aa:bb:cc:dd:ee:09", "  书房节点  ")
+        self.assertTrue(res["ok"])
+        p = r.posts[-1]
+        self.assertEqual(p["name"], "system/changedevicename")
+        self.assertEqual(p["data"], [{
+            "ActualName": "书房节点",
+            "ID": "InternetGatewayDevice.LANDevice.1.Hosts.Host.12.",
+        }])
+
 
 class Limit(unittest.TestCase):
     def test_sets_three_fields_and_posts_host_object(self):

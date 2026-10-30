@@ -312,6 +312,60 @@ centralCap: "4"
 - **只含在线设备**：真机 17 台离线设备一个都没进拓扑
 - 子路由下挂终端在 `ConnectedDevices`，可多层递归
 
+#### 子路由的「连接速率」根本不在拓扑里
+
+拓扑节点**只有 5 个字段**（`MACAddress` / `HiLinkType` / `Active` / `Name` /
+`ConnectedDevices`），`Name` 在真机上还全是空串。任何链路信息都得去 `HostInfo`
+里找**同一个 MAC** 的那条记录 —— 子路由在 HostInfo 里就是一条普通 Host 记录
+（`VendorClassID=router` + `HiLinkDevice=True`）。
+
+| 字段 | 真机值 | 含义 |
+|---|---|---|
+| `InterfaceType` | `LAN` | 回传方式：LAN / 2.4GHZ / 5GHZ / PLC |
+| `Layer2Interface` | `LAN1`…`LAN4` | 插在主路由哪个网口，只有有线才有 |
+| `rate` | `2500` | **协商速率，单位 Mbps**（这台 Q7 四个子路由全走 2.5G 口） |
+| `PhyType` | `2500` | 端口能力上限 |
+| `rssi` | `0` | 无线回传才有意义，有线恒为 0 |
+| `Frequency` | `""` | 无线回传频段 |
+| `DownRate` / `UpRate` | `0` | **固件不统计子路由自己的实时流量**，恒为 0 |
+| `RxKBytes` / `TxKBytes` | `6111` / `107023` | 子路由自己的累计收发（很小，不是下挂终端之和） |
+| `ID` | `InternetGatewayDevice.LANDevice.1.Hosts.Host.12.` | 改名要用的编号 |
+| `IsSlave` | `true` | 它是从属节点 |
+| `IsSetupSlave` | `false` | 是否走「子路由配对流程」加入 |
+| `HiLinkDevHide` | `true` | 后端标记「设备列表里藏起来」（43 个 chunk 里**零引用**，纯后端字段） |
+
+**主路由在 HostInfo 里查不到记录**，所以它的链路字段必然为空 —— 前端据此不画链路线。
+
+#### 固件自己怎么显示子路由「速率」（别被它带偏）
+
+`chunk 9` 的 `getTopologyHilinkDevice()`：遍历每个子路由的 `ConnectedDevices`，
+把**下挂终端的 `UpRate`/`DownRate` 逐个累加**，赋给这个子路由，存进
+`topologyHilinkDevice[MAC]`，再覆盖回设备列表里同名那条记录：
+
+```js
+if ("Device" === s.HiLinkType) this.hiLinkTypeDevice(s)   // 嵌套子路由，递归
+else { i += c.UpRate; o += c.DownRate }                    // 终端：累加
+t.UpRate = i; t.DownRate = o
+this.topologyHilinkDevice[e.MACAddress.toUpperCase()] = t
+```
+
+⇒ 固件显示的「子路由速率」是**下挂终端实时流量之和**，**不是链路速度**。
+真正表示「子路由到主路由这条线有多快」的只有 `rate`。
+
+#### 子路由改名
+
+固件 Web 后台**没给子路由改名入口**（子路由被排除在设备列表外，拓扑页只做展示），
+但手机 App 里能改。
+
+接口层：`system/changedevicename` 的 payload 只认 `{ActualName, ID}`
+（chunk 9 的 `postName`），**不看设备类型**；子路由在 HostInfo 里就有 `ID`。
+固件前端自己还会先把名字 `utf8_strsub(..., 64)` 截到 64 字节。
+
+- **已验证**：payload 形状、ID 来源、名字上限（固件 64 字节，本程序限 20 字）
+- **未验证**：后端是否愿意接受对 `VendorClassID=router` 这条 Host 记录的改名请求。
+  手机 App 能改 ≠ 本地 HTTP 接口一定放行 —— 真机上点一次才能定论。
+
+
 ### 3.4 `GET /api/hilink/slavedevinfo`
 
 返回 `[]`（本机型空）。另有 `hilink/hilink_status` → `{"hilink_status":1}`、
