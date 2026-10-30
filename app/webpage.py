@@ -290,6 +290,11 @@ a.lnk:hover .go{color:var(--accent-text)}
 .optbar label{display:inline-flex;align-items:center;gap:5px;margin-left:auto;
   cursor:pointer;color:var(--text-4);user-select:none;white-space:nowrap}
 .optbar input{width:13px;height:13px;margin:0;accent-color:var(--accent)}
+/* 说明条里的纯文字按钮（如「查看全部」） */
+.optbar .txtbtn{border:0;background:none;padding:0;margin:0;cursor:pointer;
+  font:inherit;font-size:11.5px;color:var(--accent-text);
+  text-decoration:underline;text-underline-offset:2px}
+.optbar .txtbtn:hover{color:var(--text-1)}
 /* 节点网格的列断点 / 间距与 .devgrid 保持一致，只是收尾多留 12px 与下方设备区隔开 */
 .ngrid{display:grid;grid-template-columns:1fr;gap:12px;margin-bottom:12px}
 @media(min-width:760px){.ngrid{grid-template-columns:repeat(2,minmax(0,1fr))}}
@@ -320,7 +325,8 @@ a.lnk:hover .go{color:var(--accent-text)}
 .mnode .mlink .lk{flex:none;font-family:var(--sans);font-size:9.5px;color:var(--text-4);
   border:1px solid var(--line-2);border-radius:4px;padding:0 4px;line-height:15px}
 .mnode .mlink .lv{flex:none;color:var(--accent-text);font-weight:600}
-.mnode .mn .edt{flex:none;margin-left:auto;width:16px;height:16px}
+/* 改名按钮与设备卡一致：紧跟在名字后面，不推到行尾 */
+.mnode .mn .edt{flex:none}
 .devgrid{display:grid;grid-template-columns:1fr;gap:12px}
 @media(min-width:760px){.devgrid{grid-template-columns:repeat(2,minmax(0,1fr))}}
 @media(min-width:900px){.devgrid{grid-template-columns:repeat(3,minmax(0,1fr))}}
@@ -512,7 +518,6 @@ html[data-theme="light"] .tpick-mask{background:rgba(30,34,56,.34)}
   .tgrid{grid-template-columns:repeat(4,minmax(0,1fr));gap:5px;padding:10px}
   .tcell{padding:9px 3px 7px;font-size:10.5px}
   #devType{width:auto!important;max-width:none!important;flex:1 1 132px;min-width:0}
-  #devNode{width:auto!important;max-width:none!important;flex:1 1 118px;min-width:0}
   .filterrow .wrap-inp{max-width:none!important;margin-left:0!important;
     flex:1 1 132px;min-width:0}
   .seg{flex:none;max-width:100%;overflow-x:auto}
@@ -1066,12 +1071,12 @@ html[data-theme="light"] .tpick-mask{background:rgba(30,34,56,.34)}
 
         <div class="optbar" id="devOptBar" hidden>
           <span id="devOptTxt"></span>
+          <button class="txtbtn" type="button" id="devAll" hidden>查看全部</button>
           <label for="devShowNodes"><input type="checkbox" id="devShowNodes">显示 Mesh 节点卡片</label>
         </div>
 
         <div class="filterrow">
           <div class="chips" id="devChips"></div>
-          <select class="sel" id="devNode" title="按 Mesh 节点筛选" style="width:auto;max-width:210px" hidden></select>
           <select class="sel" id="devType" title="按设备类型筛选" style="width:auto;max-width:190px"></select>
           <div class="wrap-inp" style="max-width:280px;margin-left:auto">
             <svg class="i"><use href="#i-search"/></svg>
@@ -1511,8 +1516,9 @@ const S = {
   info: null, hosts: null, wl: null, hist: null,
   devFilter: 'all', devQuery: '', devType: 'all',
   /* Mesh 节点筛选：'all' = 不筛；'main' = 直连主路由（含拓扑里没写归属的）；
-     其余是节点 MAC（norm 过的 12 位小写） */
-  devNode: 'all', showNodes: false,
+     其余是节点 MAC（norm 过的 12 位小写）。
+     节点卡是唯一的筛选入口（下拉已去掉），所以默认就展开，右侧勾选可收起。 */
+  devNode: 'all', showNodes: true,
   page: 'devices', nTab: 'channels',
   loaded: {},          // 每页最后一次拉数据的时间，用来做缓存
 };
@@ -2165,11 +2171,11 @@ function nodeLink(n) {
     + bits.join(' · ') + '</div>';
 }
 function renderMesh() {
-  const bar = $('#devOptBar'), sel = $('#devNode'), box = $('#devNodes');
-  if (!bar || !sel || !box) return;
+  const bar = $('#devOptBar'), box = $('#devNodes'), allBtn = $('#devAll');
+  if (!bar || !box) return;
   const nodes = meshNodes();
   if (!nodes.length) {
-    bar.hidden = true; sel.hidden = true; box.hidden = true;
+    bar.hidden = true; box.hidden = true;
     box.innerHTML = '';
     S.devNode = 'all'; S.showNodes = false;
     return;
@@ -2183,38 +2189,20 @@ function renderMesh() {
              down: list.reduce((s, d) => s + (d.down_kb || 0), 0),
              up: list.reduce((s, d) => s + (d.up_kb || 0), 0) };
   };
-  /* 下拉：'main' 一项收下「直连主路由」+「拓扑里没写归属」两类。
-     拓扑里没有 routerSelf 标记时 self 全为假，这里补一项，免得多出来一堆设备无处可筛。 */
-  const opts = [['all', '全部节点（' + rows.length + ' 台）']];
-  const seen = new Set();
-  nodes.forEach(n => {
-    const k = n.self ? 'main' : n.key;
-    if (seen.has(k)) return;
-    seen.add(k);
-    const s = statOf(k);
-    opts.push([k, (n.name || n.mac) + (n.self ? '（本机）' : '') + ' · ' + s.n + ' 台']);
-  });
-  if (!seen.has('main')) {
-    const s = statOf('main');
-    opts.unshift(['main', '主路由 · ' + s.n + ' 台']);
-  }
-  if (S.devNode !== 'all' && !seen.has(S.devNode)) S.devNode = 'all';
-  sel.innerHTML = opts.map(([v, t]) =>
-    '<option value="' + v + '"' + (S.devNode === v ? ' selected' : '') + '>' + escHtml(t) + '</option>').join('');
-  sel.hidden = false;
-  sel.value = S.devNode;
+  /* 节点卡就是筛选入口（再点一次取消），这里只兜底：选中的节点没了就退回全部 */
+  const known = new Set(nodes.map(n => (n.self ? 'main' : n.key)));
+  if (S.devNode !== 'all' && !known.has(S.devNode)) S.devNode = 'all';
 
-  /* 说明条：把「排除了什么」写出来，免得看起来像设备丢了 */
+  /* 说明条：把「排除了什么」写出来，免得看起来像设备丢了；
+     正在按节点筛选时换成当前视图，并给一个「查看全部」的出口 */
   const kids = nodes.filter(n => !n.self);
+  const cur = nodes.find(n => (n.self ? 'main' : n.key) === S.devNode);
   bar.hidden = false;
-  $('#devOptTxt').innerHTML = '<b>已从设备列表排除 ' + kids.length + ' 个 Mesh 节点</b>'
-    + (kids.length ? '（' + kids.map(n => escHtml(n.name || n.mac)).join('、') + '）' : '')
-    + ' · 它们是路由器，不是终端设备'
-    /* 选中某个节点时才提这一句：固件的拓扑只有在线设备，离线/黑名单设备
-       不属于任何节点，默认不提，免得平时多一行字 */
-    + (S.devNode !== 'all'
-      ? '<span class="optnote"> · 节点分组只含在线设备，离线设备在「全部节点」里看</span>'
-      : '');
+  $('#devOptTxt').innerHTML = cur
+    ? '<b>正在看 ' + escHtml(cur.name || cur.mac) + '</b> 下的 ' + statOf(S.devNode).n + ' 台在线设备'
+    : '<b>已从设备列表排除 ' + kids.length + ' 个 Mesh 节点</b>'
+      + (kids.length ? '（' + kids.map(n => escHtml(n.name || n.mac)).join('、') + '）' : '');
+  if (allBtn) allBtn.hidden = !cur;
 
   box.hidden = !S.showNodes;
   const cb = $('#devShowNodes');
@@ -2237,7 +2225,8 @@ function renderMesh() {
   }).join('') : '';
   $$('#devNodes .mnode').forEach(n => n.addEventListener('click', () => {
     S.devNode = (S.devNode === n.dataset.n) ? 'all' : n.dataset.n;
-    renderMesh(); renderCounts(); renderDevices();
+    /* 类型下拉的计数是按当前节点范围算的，切节点必须跟着重算 */
+    renderMesh(); renderCounts(); renderTypeFilter(); renderDevices();
   }));
   /* ✎ 改子路由名字：和设备卡走同一个接口（固件里子路由也是一条 Host 记录，
      只是 Web 后台把它的入口藏起来了，手机 App 里能改的正是这个名字） */
@@ -3685,11 +3674,14 @@ try {
 $$('.rc-acts [data-op]').forEach(b => b.addEventListener('click', () => quickOp(b.dataset.op)));
 $('#devQ').addEventListener('input', e => { S.devQuery = e.target.value; renderDevices(); });
 $('#devType').addEventListener('change', e => { S.devType = e.target.value; renderDevices(); });
-$('#devNode').addEventListener('change', e => {
-  S.devNode = e.target.value; renderMesh(); renderCounts(); renderDevices(); renderTypeFilter();
+$('#devAll').addEventListener('click', () => {
+  S.devNode = 'all'; renderMesh(); renderCounts(); renderTypeFilter(); renderDevices();
 });
 $('#devShowNodes').addEventListener('change', e => {
-  S.showNodes = e.target.checked; renderMesh();
+  S.showNodes = e.target.checked;
+  /* 节点卡藏起来后就没有筛选入口了，顺手退回全部，免得停在「看不到也退不掉」的筛选态 */
+  if (!S.showNodes) S.devNode = 'all';
+  renderMesh(); renderCounts(); renderTypeFilter(); renderDevices();
 });
 
 /* 轻量轮询：只拉内存里的状态（不打路由器） */
