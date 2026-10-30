@@ -1,0 +1,690 @@
+{
+ "safe": [
+  {
+   "key": "HostInfo",
+   "path": "system/HostInfo"
+  },
+  {
+   "key": "MultiHostInfo",
+   "path": "system/MultiHostInfo"
+  },
+  {
+   "key": "RepeaterDial",
+   "path": "ntwk/RepeaterDial"
+  },
+  {
+   "key": "RepeaterDial_scram",
+   "path": "ntwk/RepeaterDial_scram"
+  },
+  {
+   "key": "WlanTestStatus",
+   "path": "ntwk/WlanTestStatus"
+  },
+  {
+   "key": "aichanoptinfo",
+   "path": "ntwk/aichanoptinfo"
+  },
+  {
+   "key": "alg",
+   "path": "ntwk/alg"
+  },
+  {
+   "key": "app_wizard",
+   "path": "app/wizards"
+  },
+  {
+   "key": "application",
+   "path": "app/application"
+  },
+  {
+   "key": "applicationitems",
+   "path": "app/applicationitems"
+  },
+  {
+   "key": "aria2Infos",
+   "path": "openee/plugin/infos"
+  },
+  {
+   "key": "backhaul",
+   "path": "ntwk/backhaul"
+  },
+  {
+   "key": "channelinfo",
+   "path": "ntwk/channelinfo"
+  },
+  {
+   "key": "country_code",
+   "path": "ntwk/country_code"
+  },
+  {
+   "key": "ddns",
+   "path": "ntwk/ddns"
+  },
+  {
+   "key": "ddnsstatus",
+   "path": "ntwk/ddnsstatus"
+  },
+  {
+   "key": "device_count",
+   "path": "system/device_count"
+  },
+  {
+   "key": "deviceinfo",
+   "path": "system/deviceinfo"
+  },
+  {
+   "key": "dms",
+   "path": "app/dms"
+  },
+  {
+   "key": "dmz",
+   "path": "ntwk/dmz"
+  },
+  {
+   "key": "doublewan",
+   "path": "ntwk/wan"
+  },
+  {
+   "key": "encpubkey",
+   "path": "system/encpubkey"
+  },
+  {
+   "key": "ethnegotiation",
+   "path": "ntwk/ethnegotiation"
+  },
+  {
+   "key": "ethportmode",
+   "path": "app/ethportmode"
+  },
+  {
+   "key": "firewall",
+   "path": "ntwk/firewall"
+  },
+  {
+   "key": "forceupgcfg",
+   "path": "system/forceupgcfg"
+  },
+  {
+   "key": "fsstatus",
+   "path": "usbstorage/fsstatus"
+  },
+  {
+   "key": "fwmacfilter",
+   "path": "ntwk/fwmacfilter"
+  },
+  {
+   "key": "getmacaddress",
+   "path": "ntwk/getmacaddress"
+  },
+  {
+   "key": "getpairstatus",
+   "path": "ntwk/getpairstatus"
+  },
+  {
+   "key": "guest_network_limitrate",
+   "path": "ntwk/guest_network_limitrate"
+  },
+  {
+   "key": "guest_network_resttime",
+   "path": "ntwk/guest_network_resttime"
+  },
+  {
+   "key": "hilink_status",
+   "path": "hilink/hilink_status"
+  },
+  {
+   "key": "hilinkwaninfo",
+   "path": "ntwk/hilinkwaninfo"
+  },
+  {
+   "key": "homesec_stealnet",
+   "path": "ntwk/homesec_stealnet"
+  },
+  {
+   "key": "ip6firewall_enable",
+   "path": "ntwk/ip6firewall_enable"
+  },
+  {
+   "key": "ip6firewall_trustlist",
+   "path": "ntwk/ip6firewall_trustlist"
+  },
+  {
+   "key": "iptv",
+   "path": "ntwk/iptv"
+  },
+  {
+   "key": "ipv6_enable",
+   "path": "ntwk/ipv6_enable"
+  },
+  {
+   "key": "ipv6_lan",
+   "path": "ntwk/ipv6_lan"
+  },
+  {
+   "key": "ipv6_wan",
+   "path": "ntwk/ipv6_wan"
+  },
+  {
+   "key": "l2topo",
+   "path": "device/l2topo"
+  },
+  {
+   "key": "l2tp",
+   "path": "ntwk/l2tp"
+  },
+  {
+   "key": "lan",
+   "path": "ntwk/lan"
+  },
+  {
+   "key": "lan_all",
+   "path": "ntwk/lan_all"
+  },
+  {
+   "key": "lan_devicetype",
+   "path": "ntwk/lan_devicetype"
+  },
+  {
+   "key": "lan_host",
+   "path": "ntwk/lan_host"
+  },
+  {
+   "key": "lan_ipaddressreserve",
+   "path": "ntwk/lan_ipaddressreserve"
+  },
+  {
+   "key": "lan_ipserverpool",
+   "path": "ntwk/lan_ipserverpool"
+  },
+  {
+   "key": "lan_server",
+   "path": "ntwk/lan_server"
+  },
+  {
+   "key": "lan_upnp",
+   "path": "ntwk/lan_upnp"
+  },
+  {
+   "key": "lan_upnp_portmapping",
+   "path": "ntwk/lan_upnp_portmapping"
+  },
+  {
+   "key": "language",
+   "path": "language/lang"
+  },
+  {
+   "key": "ledstatus",
+   "path": "hilink/ledstatus"
+  },
+  {
+   "key": "location",
+   "path": "system/location"
+  },
+  {
+   "key": "main_router_ssid",
+   "path": "ntwk/main_router_ssid"
+  },
+  {
+   "key": "manywan",
+   "path": "ntwk/wan"
+  },
+  {
+   "key": "mcast",
+   "path": "ntwk/mcast"
+  },
+  {
+   "key": "mirror",
+   "path": "ntwk/mirror"
+  },
+  {
+   "key": "multi_bridge_wan",
+   "path": "ntwk/multi_bridge_wan"
+  },
+  {
+   "key": "multi_ssid",
+   "path": "ntwk/multi_ssid"
+  },
+  {
+   "key": "multiwan",
+   "path": "ntwk/multiwan"
+  },
+  {
+   "key": "nfc_switch",
+   "path": "bsp/nfc_switch"
+  },
+  {
+   "key": "ntwkcap_compare",
+   "path": "hilink/ntwkcap_compare"
+  },
+  {
+   "key": "online_check",
+   "path": "system/online_check"
+  },
+  {
+   "key": "onlinestate",
+   "path": "system/onlinestate"
+  },
+  {
+   "key": "plc_web_switch_siso",
+   "path": "ntwk/plc_web_switch_siso"
+  },
+  {
+   "key": "plcenableall",
+   "path": "ntwk/plcenableall"
+  },
+  {
+   "key": "portforwarding",
+   "path": "ntwk/portforwarding"
+  },
+  {
+   "key": "portmapping",
+   "path": "ntwk/portmapping"
+  },
+  {
+   "key": "porttrigger",
+   "path": "ntwk/porttrigger"
+  },
+  {
+   "key": "powernetwork",
+   "path": "ntwk/powernetwork"
+  },
+  {
+   "key": "pptp",
+   "path": "ntwk/pptp"
+  },
+  {
+   "key": "privacypolicy",
+   "path": "app/privacypolicy"
+  },
+  {
+   "key": "qos",
+   "path": "app/qos"
+  },
+  {
+   "key": "repeaterinfo",
+   "path": "ntwk/repeaterinfo"
+  },
+  {
+   "key": "repeaterstate",
+   "path": "ntwk/repeaterstate"
+  },
+  {
+   "key": "sambaanonymous",
+   "path": "usbstorage/sambaanonymous"
+  },
+  {
+   "key": "sdcapacity",
+   "path": "sdcard/sdcapacity"
+  },
+  {
+   "key": "slavedevinfo",
+   "path": "hilink/slavedevinfo"
+  },
+  {
+   "key": "smartpush_autoupg",
+   "path": "app/smartpush_autoupg"
+  },
+  {
+   "key": "smartvpn",
+   "path": "ntwk/smartvpn"
+  },
+  {
+   "key": "smartvpnmaclist",
+   "path": "ntwk/smartvpnmaclist"
+  },
+  {
+   "key": "smartvpnurl",
+   "path": "ntwk/smartvpnurl"
+  },
+  {
+   "key": "sntp",
+   "path": "ntwk/sntp"
+  },
+  {
+   "key": "speedtest",
+   "path": "app/speedtest"
+  },
+  {
+   "key": "tgpgameinfo",
+   "path": "app/tgpgameinfo"
+  },
+  {
+   "key": "tgpgameswitch",
+   "path": "app/tgpgameswitch"
+  },
+  {
+   "key": "timedredial",
+   "path": "ntwk/timedredial"
+  },
+  {
+   "key": "topology",
+   "path": "device/topology"
+  },
+  {
+   "key": "tunnel",
+   "path": "ntwk/tunnel"
+  },
+  {
+   "key": "tunneltype",
+   "path": "ntwk/tunneltype"
+  },
+  {
+   "key": "urlfilter",
+   "path": "ntwk/urlfilter"
+  },
+  {
+   "key": "urlsec",
+   "path": "ntwk/urlsec"
+  },
+  {
+   "key": "wandetect",
+   "path": "ntwk/wandetect"
+  },
+  {
+   "key": "wanlearntrigerloopmac",
+   "path": "ntwk/wanlearntrigerloopmac"
+  },
+  {
+   "key": "wansearchcontrol",
+   "path": "ntwk/wansearchcontrol"
+  },
+  {
+   "key": "wlan_easymesh",
+   "path": "ntwk/wlan_easymesh"
+  },
+  {
+   "key": "wlandbho",
+   "path": "ntwk/wlandbho"
+  },
+  {
+   "key": "wlanelink",
+   "path": "ntwk/wlanelink"
+  },
+  {
+   "key": "wlanintelligent",
+   "path": "ntwk/wlanintelligent"
+  },
+  {
+   "key": "wlanmode",
+   "path": "system/wlanmode"
+  },
+  {
+   "key": "wlanradio",
+   "path": "ntwk/wlanradio"
+  },
+  {
+   "key": "wlantimeaccelerate",
+   "path": "ntwk/wlanTimingAccelerate"
+  },
+  {
+   "key": "wlanwifisync",
+   "path": "ntwk/wlanwifisync"
+  },
+  {
+   "key": "wlanwps",
+   "path": "ntwk/wlanwps"
+  },
+  {
+   "key": "wps_switch",
+   "path": "ntwk/wps_switch"
+  }
+ ],
+ "skip": [
+  {
+   "key": "access_auth",
+   "path": "ntwk/access_auth"
+  },
+  {
+   "key": "andlink_lock_net",
+   "path": "ntwk/andlink_lock_net"
+  },
+  {
+   "key": "aria2_upload",
+   "path": "sdcard/fileupload"
+  },
+  {
+   "key": "autoupgrade",
+   "path": "system/autoupgrade"
+  },
+  {
+   "key": "bi_statistics",
+   "path": "system/bi_statistics"
+  },
+  {
+   "key": "changedevicename",
+   "path": "system/changedevicename"
+  },
+  {
+   "key": "client_heartbeat",
+   "path": "ntwk/client_heartbeat"
+  },
+  {
+   "key": "custom_report",
+   "path": "system/custom_report"
+  },
+  {
+   "key": "delayreboot",
+   "path": "system/delayreboot"
+  },
+  {
+   "key": "deletefile",
+   "path": "sdcard/deletefile"
+  },
+  {
+   "key": "diagnose_button",
+   "path": "system/diagnose_button"
+  },
+  {
+   "key": "diagnose_crash",
+   "path": "system/diagnose_crash"
+  },
+  {
+   "key": "diagnose_crash_devlist",
+   "path": "system/diagnose_crash_devlist"
+  },
+  {
+   "key": "diagnose_led",
+   "path": "system/diagnose_led"
+  },
+  {
+   "key": "diagnose_ping",
+   "path": "system/diagnose_ping"
+  },
+  {
+   "key": "diagnose_usb",
+   "path": "system/diagnose_usb"
+  },
+  {
+   "key": "dnsdiagnose",
+   "path": "system/dnsdiagnose"
+  },
+  {
+   "key": "forceupg",
+   "path": "system/forceupg"
+  },
+  {
+   "key": "forceupglater",
+   "path": "system/forceupglater"
+  },
+  {
+   "key": "guide",
+   "path": "system/guide"
+  },
+  {
+   "key": "guideheartbeat",
+   "path": "system/guideheartbeat"
+  },
+  {
+   "key": "heartbeat",
+   "path": "system/heartbeat"
+  },
+  {
+   "key": "homesec_abfa",
+   "path": "ntwk/homesec_abfa"
+  },
+  {
+   "key": "hota_redirect_omit",
+   "path": "system/hota_redirect_omit"
+  },
+  {
+   "key": "hotaservice",
+   "path": "system/hotaservice"
+  },
+  {
+   "key": "httpdiagnose",
+   "path": "system/httpdiagnose"
+  },
+  {
+   "key": "ip_capture",
+   "path": "ntwk/ipcapture"
+  },
+  {
+   "key": "onlineupg",
+   "path": "system/onlineupg"
+  },
+  {
+   "key": "plc_web_certification",
+   "path": "ntwk/plc_web_certification"
+  },
+  {
+   "key": "processstatus",
+   "path": "system/processstatus"
+  },
+  {
+   "key": "provcode",
+   "path": "system/provcode"
+  },
+  {
+   "key": "pwd",
+   "path": "system/pwd"
+  },
+  {
+   "key": "pwdrule",
+   "path": "system/pwdrule"
+  },
+  {
+   "key": "qosclass_host",
+   "path": "app/qosclass_host"
+  },
+  {
+   "key": "rebootplan",
+   "path": "system/rebootplan"
+  },
+  {
+   "key": "repeaterdiag",
+   "path": "ntwk/repeaterdiag"
+  },
+  {
+   "key": "restorestate",
+   "path": "system/restorestate"
+  },
+  {
+   "key": "sdfile",
+   "path": "sdcard/sdfile"
+  },
+  {
+   "key": "slave_setup",
+   "path": "hilink/slave_setup"
+  },
+  {
+   "key": "swan",
+   "path": "ntwk/swan"
+  },
+  {
+   "key": "timecontrol",
+   "path": "ntwk/timecontrol"
+  },
+  {
+   "key": "tr069",
+   "path": "app/tr069"
+  },
+  {
+   "key": "uploadconfigfile",
+   "path": "device/uploadconfigfile"
+  },
+  {
+   "key": "uploadconfigfileresult",
+   "path": "device/uploadconfigfileresult"
+  },
+  {
+   "key": "uploadimage",
+   "path": "device/uploadimage"
+  },
+  {
+   "key": "usbaccount",
+   "path": "usbstorage/usbaccount"
+  },
+  {
+   "key": "usbchangemode",
+   "path": "system/usbchangemode"
+  },
+  {
+   "key": "user_login",
+   "path": "system/user_login"
+  },
+  {
+   "key": "user_login_nonce",
+   "path": "system/user_login_nonce"
+  },
+  {
+   "key": "user_login_proof",
+   "path": "system/user_login_proof"
+  },
+  {
+   "key": "user_logout",
+   "path": "system/user_logout"
+  },
+  {
+   "key": "useraccount",
+   "path": "system/useraccount"
+  },
+  {
+   "key": "useraccount_scram",
+   "path": "system/useraccount_scram"
+  },
+  {
+   "key": "userbehavior",
+   "path": "system/userbehavior"
+  },
+  {
+   "key": "wandiagnose",
+   "path": "ntwk/wandiagnose"
+  },
+  {
+   "key": "wifiscan",
+   "path": "ntwk/wifiscan"
+  },
+  {
+   "key": "wifiscanresult",
+   "path": "ntwk/wifiscanresult"
+  },
+  {
+   "key": "wizard_wifi",
+   "path": "system/wizard_wifi"
+  },
+  {
+   "key": "wlan_time_switch_list",
+   "path": "ntwk/wlan_time_switch_list"
+  },
+  {
+   "key": "wlanfilterenhance",
+   "path": "ntwk/wlanfilterenhance"
+  },
+  {
+   "key": "wlanpowertimeswitch",
+   "path": "ntwk/wlanpowertimeswitch"
+  },
+  {
+   "key": "wlantimeswitch",
+   "path": "ntwk/wlantimeswitch"
+  },
+  {
+   "key": "xlink_lock_net",
+   "path": "ntwk/xlink_lock_net"
+  },
+  {
+   "key": "zjct_redirect",
+   "path": "ntwk/zjct_redirect"
+  }
+ ]
+}

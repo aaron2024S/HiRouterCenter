@@ -27,8 +27,9 @@
    再在页面上下文里用 `fetch`（`credentials:"include"` + 固件的 CSRF 头）逐个 GET 读接口。
 3. **文案包**：`/lang/zh/{name}_res.js`（`name` 见 §5 功能地图），共 72 份 159KB。
 
-脚本：`.tmp-render/fw-crawl.js`（全量抓取）、`.tmp-render/fw-reprobe.js`（404 接口复探）、
-`.tmp-render/fw-live-grab2.js`（被动监听固件自身请求）。
+**重抓用的脚本在 [`tools/firmware-probe/`](../tools/firmware-probe/)**（已随仓库提供，见该目录 README）：
+`fw-crawl.js`（全量抓取）、`fw-reprobe.js`（404 接口复探）、`fw-headers.js`（请求头矩阵）、
+`fw-live-grab2.js`（被动监听固件自身请求）。全部只发 GET、不接触密码。
 
 ---
 
@@ -665,23 +666,29 @@ more = [
 
 ## 8. 文件索引
 
-| 路径 | 内容 |
-|---|---|
-| `.tmp-render/fw/main.js` | 固件主包（路由表、菜单树、store） |
-| `.tmp-render/fw/c-*.js` | 43 个懒加载 chunk（各功能页实现） |
-| `.tmp-render/fw/routes.json` | **171 条 API 路由表**（key → path） |
-| `.tmp-render/fw/fetch-list.json` | 抓取清单（107 可读 + 64 跳过及原因） |
-| `.tmp-render/fw/lang/*.js` | 72 份中文文案包（功能名/提示语） |
-| `.tmp-render/fw-live/api/*.json` | **56 个接口的真机原始返回** |
-| `.tmp-render/fw-live/schema.json` | 56 接口 × 460 字段的脱敏结构 |
-| `.tmp-render/fw-live/crawl-index.json` | 抓取结果索引（状态码/大小） |
-| `.tmp-render/fw-live/reprobe.json` | 404 接口复探结果 |
-| `.tmp-render/fw-crawl.js` | 全量抓取脚本（可重跑） |
-| `.tmp-render/fw-reprobe.js` | 404 复探脚本 |
-| `.tmp-render/fw-live-grab2.js` | 被动监听固件自身请求（抓拓扑用） |
+| 路径 | 内容 | 进仓库 |
+|---|---|---|
+| `tools/firmware-probe/routes.json` | **171 条 API 路由表**（key → path） | ✅ |
+| `tools/firmware-probe/fetch-list.json` | 抓取清单（107 可读 + 64 跳过及原因） | ✅ |
+| `tools/firmware-probe/*.js` | 四个抓取脚本（见该目录 README） | ✅ |
+| `docs/firmware-api.md` | 本文件 | ✅ |
+| `.tmp-render/fw/main.js` | 固件主包（路由表、菜单树、store） | ✗ |
+| `.tmp-render/fw/c-*.js` | 43 个懒加载 chunk（各功能页实现 1.6MB） | ✗ |
+| `.tmp-render/fw/lang/*.js` | 72 份中文文案包（功能名/提示语 159KB） | ✗ |
+| `.tmp-render/fw-live/api/*.json` | **56 个接口的真机原始返回**（含隐私） | ✗ |
+| `.tmp-render/fw-live/schema.json` | 56 接口 × 460 字段的脱敏结构 | ✗ |
+| `.tmp-render/fw-live/crawl-index.json` | 抓取结果索引（状态码/大小） | ✗ |
+| `.tmp-render/fw-live/reprobe.json` | 404 接口复探结果 | ✗ |
+| `.tmp-render/fw-live/header-matrix.json` | 请求头矩阵实验结果 | ✗ |
 
-**重新采集**：`NODE_PATH=/c/Users/Jun/.workbuddy/binaries/node/workspace/node_modules node .tmp-render/fw-crawl.js`，
-浏览器弹出后手动登录即可（脚本不接触密码，只发 GET）。
+**重新采集**（脚本已随仓库提供，不需要再去翻 `.tmp-render`）：
+
+```bash
+export NODE_PATH=/c/Users/Jun/.workbuddy/binaries/node/workspace/node_modules
+node tools/firmware-probe/fw-crawl.js      # 浏览器弹出后手动登录
+```
+
+`.tmp-render/` 被 `.gitignore` 排除，清理工作副本不会影响脚本与路由表（它们在 `tools/`）。
 
 ---
 

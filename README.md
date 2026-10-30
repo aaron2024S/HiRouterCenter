@@ -510,6 +510,8 @@ ipv6sync/
 ├── preview_console.py   本机预览控制台（开发辅助，不进镜像）
 ├── docs/
 │   └── firmware-api.md  固件接口档案：171 条路由 + 56 个接口字段 + 能力表（真机取证）
+├── tools/
+│   └── firmware-probe/  固件抓包探针（只发 GET，开发期用，不进镜像）
 ├── offline/             离线镜像组装与校验（见 offline/README.md）
 └── tests/
     ├── test_logic.py    同步核心 + 唤醒 + 计划任务（假路由器）
