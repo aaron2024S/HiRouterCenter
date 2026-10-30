@@ -67,6 +67,8 @@ HOST = {
     "ActualName": "旧名字", "HostName": "host-01", "Active": 1,
     "AccessRecord": "2026-10-30 15:00:00", "DownRate": 820, "UpRate": 66,
     "DeviceDownRateEnable": 0, "DeviceMaxUpLoadRate": 0, "DeviceMaxDownLoadRate": 0,
+    # 累计收发（单位 KB）。固件前端不用这两个字段，但真机确实返回，离线也不清零
+    "RxKBytes": 73400320, "TxKBytes": 7340032,
 }
 
 
@@ -83,6 +85,26 @@ class HostRowFields(unittest.TestCase):
         self.assertEqual(r["down_kb"], 820)
         self.assertEqual(r["up_kb"], 66)
         self.assertIsInstance(r["online_secs"], int)
+
+    def test_cumulative_bytes_kept_for_offline_host(self):
+        """累计收发是「累计量」，设备下线不清零 —— 离线行也要带上，不能跟着 active 归零。"""
+        off = dict(HOST, Active=0, OfflineRecord="2026-10-30 10:00:00",
+                   RxKBytes=1200000, TxKBytes=5000)
+        n = make_node(FakeRouter(hosts=[off]))
+        n.cfg = type("C", (), {"state_file": ""})()
+        r = n._host_rows()[0]
+        self.assertFalse(r["active"])
+        self.assertEqual(r["rx_kb"], 1200000)
+        self.assertEqual(r["tx_kb"], 5000)
+        self.assertEqual(r["down_kb"], 0)          # 实时速率离线归零，和累计是两回事
+
+    def test_cumulative_bytes_tolerate_garbage(self):
+        bad = dict(HOST, RxKBytes="", TxKBytes=None)
+        n = make_node(FakeRouter(hosts=[bad]))
+        n.cfg = type("C", (), {"state_file": ""})()
+        r = n._host_rows()[0]
+        self.assertEqual(r["rx_kb"], 0)
+        self.assertEqual(r["tx_kb"], 0)
 
     def test_limit_fields_follow_master_switch(self):
         # 总开关关着：即使字段里残留数字，界面上也应该显示「不限速」

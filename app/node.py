@@ -1013,6 +1013,12 @@ class Node:
                              if _truthy(h.get("DeviceDownRateEnable")) else 0),
                 "limit_down": (_kbps_of(h, "DeviceMaxDownLoadRate")
                                if _truthy(h.get("DeviceDownRateEnable")) else 0),
+                # 累计收发（固件 RxKBytes / TxKBytes，单位 KB，离线机也保留不清零）。
+                # 固件前端自己不用这两个字段（43 个 chunk 里零命中），方向是从真机样本
+                # 反推的：离线手机 11.7GB/1.2GB、离线台式机 157GB/3.2GB 都符合
+                # 「Rx = 设备接收（↓）、Tx = 设备发送（↑）」。
+                "rx_kb": _kbps_of(h, "RxKBytes"),
+                "tx_kb": _kbps_of(h, "TxKBytes"),
                 # 挂在哪个 Mesh 节点下（节点 MAC）。空 = 直连主路由 / 拓扑里没写
                 "node": owner.get(key, ""),
             })

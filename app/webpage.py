@@ -286,6 +286,7 @@ a.lnk:hover .go{color:var(--accent-text)}
   border:1px solid var(--line-2);border-radius:9px;background:var(--ink-800);
   padding:7px 10px;font-size:11.5px;line-height:1.5;color:var(--text-5)}
 .optbar b{font-weight:500;color:var(--text-3)}
+.optbar .optnote{color:var(--text-6)}
 .optbar label{display:inline-flex;align-items:center;gap:5px;margin-left:auto;
   cursor:pointer;color:var(--text-4);user-select:none;white-space:nowrap}
 .optbar input{width:13px;height:13px;margin:0;accent-color:var(--accent)}
@@ -434,6 +435,7 @@ html[data-theme="light"] .tpick-mask{background:rgba(30,34,56,.34)}
 .dev-flow{display:flex;align-items:center;gap:7px;flex-wrap:wrap;
   font-size:11.5px;color:var(--text-5);font-variant-numeric:tabular-nums}
 .dev-flow .dotsep{width:3px;height:3px;border-radius:99px;background:var(--line-4);flex:none}
+.dev-flow .cum{color:var(--text-6)}
 .dev-act{display:flex;align-items:center;gap:5px;margin-top:8px;padding-top:9px;
   border-top:1px solid var(--line-2);flex-wrap:nowrap}
 .dev-act .grow{flex:1 1 auto;min-width:0}
@@ -1699,7 +1701,9 @@ function meshNodes() {
   return (m.ok && m.grouped) ? (m.nodes || []) : [];
 }
 /* 一台设备归哪个节点：后端给的 node 是节点 MAC；空 = 直连主路由。
-   主路由自己也归到 'main'，所以下拉里主路由那一项能同时收下这两种。 */
+   主路由自己也归到 'main'，所以下拉里主路由那一项能同时收下这两种。
+   注意：拓扑只覆盖在线设备，离线设备的 node 一定是空，但 nodeScoped() 已经把
+   它们挡在「具体节点」之外了（只在「全部节点」可见），别在这里当成主路由。 */
 function nodeKeyOf(d) {
   const key = d.node || '';
   if (!key) return 'main';
@@ -1707,11 +1711,14 @@ function nodeKeyOf(d) {
   return (n && n.self) ? 'main' : key;
 }
 /* 只按节点筛过的设备集合：chips / 类型下拉的计数都跟着它走，不然选了子路由
-   还显示全量的台数，看着像筛选没生效。 */
+   还显示全量的台数，看着像筛选没生效。
+   固件拓扑里只有在线设备 —— 真机 37 台里 17 台离线的一个都没进 device/topology，
+   所以选中某个节点时只认「当前在线且确实挂在它下面」的设备：不去拿「上次挂在
+   哪」瞎猜，离线/黑名单设备就只出现在「全部节点」里。 */
 function nodeScoped() {
   const rows = devRows();
   if (S.devNode === 'all') return rows;
-  return rows.filter(d => nodeKeyOf(d) === S.devNode);
+  return rows.filter(d => d.active && nodeKeyOf(d) === S.devNode);
 }
 function visibleHosts() {
   const q = S.devQuery.trim().toLowerCase();
@@ -1768,6 +1775,13 @@ function fmtDur(sec) {
 function fmtRate(kb) {
   const k = Math.max(0, Math.round(Number(kb) || 0));
   return k >= 1024 ? (k / 1024).toFixed(1) + ' MB/s' : k + ' KB/s';
+}
+/* 累计流量：固件 RxKBytes / TxKBytes 的单位是 KB，按量级换到 MB / GB */
+function fmtBytes(kb) {
+  const k = Math.max(0, Math.round(Number(kb) || 0));
+  if (k >= 1024 * 1024) return (k / 1024 / 1024).toFixed(1) + ' GB';
+  if (k >= 1024) return (k / 1024).toFixed(1) + ' MB';
+  return k + ' KB';
 }
 /* 接入方式：对齐固件 InterfaceType。认不出来的宁可不显示，也不往界面上抛内部取值 */
 const IFACE_LABEL = {
@@ -1884,6 +1898,14 @@ function renderDevices() {
     const port = r ? r.port
       : (hit ? (hit.port == null || hit.port === '' ? '全部' : hit.port) : null);
     const foot = el('div', 'dev-foot');
+    /* 累计收发：固件给的是「设备接收 / 设备发送」的累计量，离线设备也保留（不清零），
+       所以在线卡片跟在速率后面，离线卡片单独占这一行。
+       分隔点写在 cum 内部而不是用 dotsep 元素：卡片窄的时候累计会整体换到第二行，
+       用 dotsep 会把它孤零零留在上一行尾巴上。 */
+    const cum = (d.rx_kb || d.tx_kb)
+      ? '<span class="cum" title="路由器统计的累计收发流量">· 累计 ↓ '
+        + escHtml(fmtBytes(d.rx_kb)) + ' ↑ ' + escHtml(fmtBytes(d.tx_kb)) + '</span>'
+      : '';
     /* 在线时长 + 实时上下行。离线设备固件不返回速率，只显示上面那行「最后在线」，
        不硬凑一个 0 KB/s。 */
     if (d.active) {
@@ -1891,8 +1913,10 @@ function renderDevices() {
       if (d.online_secs != null) bits.push('在线 ' + escHtml(fmtDur(d.online_secs)));
       bits.push('<span title="路由器实时上报的下载速率">↓ ' + escHtml(fmtRate(d.down_kb)) + '</span>');
       bits.push('<span title="路由器实时上报的上传速率">↑ ' + escHtml(fmtRate(d.up_kb)) + '</span>');
-      foot.appendChild(el('div', 'dev-flow',
-        bits.join('<span class="dotsep"></span>')));
+      const html = bits.join('<span class="dotsep"></span>') + cum;
+      foot.appendChild(el('div', 'dev-flow', html));
+    } else if (cum) {
+      foot.appendChild(el('div', 'dev-flow', cum.replace('· ', '')));
     }
     const act = el('div', 'dev-act');
     act.innerHTML = (port == null
@@ -2114,9 +2138,11 @@ function renderMesh() {
     return;
   }
   const rows = devRows();
+  /* 台数只算在线的：离线和黑名单设备不挂任何节点（拓扑里也没有它们），
+     算进来会让「客厅子路由 · 13 台」点进去只有 10 台，对不上。 */
   const statOf = k => {
-    const list = rows.filter(d => nodeKeyOf(d) === k);
-    return { total: list.length, online: list.filter(d => d.active).length,
+    const list = rows.filter(d => d.active && nodeKeyOf(d) === k);
+    return { n: list.length,
              down: list.reduce((s, d) => s + (d.down_kb || 0), 0),
              up: list.reduce((s, d) => s + (d.up_kb || 0), 0) };
   };
@@ -2129,11 +2155,11 @@ function renderMesh() {
     if (seen.has(k)) return;
     seen.add(k);
     const s = statOf(k);
-    opts.push([k, (n.name || n.mac) + (n.self ? '（本机）' : '') + ' · ' + s.total + ' 台']);
+    opts.push([k, (n.name || n.mac) + (n.self ? '（本机）' : '') + ' · ' + s.n + ' 台']);
   });
   if (!seen.has('main')) {
     const s = statOf('main');
-    opts.unshift(['main', '主路由 · ' + s.total + ' 台']);
+    opts.unshift(['main', '主路由 · ' + s.n + ' 台']);
   }
   if (S.devNode !== 'all' && !seen.has(S.devNode)) S.devNode = 'all';
   sel.innerHTML = opts.map(([v, t]) =>
@@ -2146,7 +2172,12 @@ function renderMesh() {
   bar.hidden = false;
   $('#devOptTxt').innerHTML = '<b>已从设备列表排除 ' + kids.length + ' 个 Mesh 节点</b>'
     + (kids.length ? '（' + kids.map(n => escHtml(n.name || n.mac)).join('、') + '）' : '')
-    + ' · 它们是路由器，不是终端设备';
+    + ' · 它们是路由器，不是终端设备'
+    /* 选中某个节点时才提这一句：固件的拓扑只有在线设备，离线/黑名单设备
+       不属于任何节点，默认不提，免得平时多一行字 */
+    + (S.devNode !== 'all'
+      ? '<span class="optnote"> · 节点分组只含在线设备，离线设备在「全部节点」里看</span>'
+      : '');
 
   box.hidden = !S.showNodes;
   const cb = $('#devShowNodes');
@@ -2158,8 +2189,8 @@ function renderMesh() {
       + '<div class="mn"><b title="' + escHtml(n.name || '') + '">' + escHtml(n.name || n.mac) + '</b>'
       + (n.self ? '<span class="self">本机</span>' : '') + '</div>'
       + '<div class="mm">' + escHtml(n.model || '') + (n.model ? ' · ' : '') + escHtml(n.mac) + '</div>'
-      + '<div class="ms"><b>' + s.online + ' / ' + s.total + '</b>台在线</div>'
-      + (s.total ? '<div class="mr">↓ ' + fmtRate(s.down) + ' ↑ ' + fmtRate(s.up) + '</div>' : '')
+      + '<div class="ms"><b>' + s.n + '</b> 台在线</div>'
+      + (s.n ? '<div class="mr">↓ ' + fmtRate(s.down) + ' ↑ ' + fmtRate(s.up) + '</div>' : '')
       + '</div>';
   }).join('') : '';
   $$('#devNodes .mnode').forEach(n => n.addEventListener('click', () => {
