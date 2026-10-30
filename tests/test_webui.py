@@ -23,7 +23,7 @@ from app import settings as st          # noqa: E402
 from app import discover                # noqa: E402
 from app.config import Config, Rule, load_config   # noqa: E402
 from app.node import Node               # noqa: E402
-from app.router import AuthFailed       # noqa: E402
+from app.router import AuthFailed, NotLoggedIn, RouterError   # noqa: E402
 from app.sync import Syncer             # noqa: E402
 from app.webui import WebUI, webui_from_env   # noqa: E402
 
@@ -1166,6 +1166,101 @@ class NodeHostsTest(EnvSandbox):
         # 空响应
         self.assertEqual(_parse_blacklist(None), [])
         self.assertEqual(_parse_blacklist({}), [])
+
+
+class NodeTrafficTest(EnvSandbox):
+    """Node.traffic()：设备页每 5 秒拉一次的轻量读数。
+
+    这个接口存在的唯一理由就是**便宜**，所以测试重点不是字段多好看，
+    而是「到底打了几个路由器接口」—— 谁哪天顺手加一句读黑名单，
+    这里必须立刻红，否则它就跟 hosts() 一样重了，那还不如直接调 hosts()。
+    """
+
+    class FakeR:
+        def __init__(self, hosts=None, expire_once=False):
+            self.logged_in = True
+            self.calls = []
+            self.expire_once = expire_once
+            self.hosts = hosts if hosts is not None else [
+                {"MACAddress": "AA:00:00:00:00:01", "Active": 1,
+                 "DownRate": 2048, "UpRate": 512,
+                 "RxKBytes": 1048576, "TxKBytes": 4096,
+                 "AccessRecord": str(int(time.time()) - 3600)},
+                {"MACAddress": "AA:00:00:00:00:02", "Active": "0",
+                 "DownRate": 99, "UpRate": 99,
+                 "RxKBytes": 2048, "TxKBytes": 1024},
+            ]
+
+        def check_session(self):
+            self.calls.append("check_session")
+            return True
+
+        def get(self, name, params=None):
+            self.calls.append(name)
+            if name != "HostInfo":
+                raise AssertionError("traffic 不该读 " + name)
+            if self.expire_once:
+                self.expire_once = False
+                raise NotLoggedIn("会话失效")
+            return self.hosts
+
+    def _node(self, **kw) -> Node:
+        node = Node.__new__(Node)
+        cfg = Config(host="192.168.3.1", username="admin", password="x",
+                     session_file=None, rules=[])
+        node.router = self.FakeR(**kw)
+        node.syncer = Syncer(cfg, node.router)
+        return node
+
+    def test_only_one_router_call(self):
+        """正常路径只打 HostInfo：不探会话、不读黑名单 / 白名单 / 拓扑。"""
+        node = self._node()
+        node.traffic()
+        self.assertEqual(node.router.calls, ["HostInfo"],
+                         "例行轮询多打任何一个接口都会让它退化成 hosts()")
+
+    def test_online_and_offline_fields(self):
+        node = self._node()
+        res = node.traffic()
+        self.assertTrue(res["ok"])
+        by = {h["mac"]: h for h in res["hosts"]}
+        on = by["AA:00:00:00:00:01"]
+        self.assertTrue(on["active"])
+        self.assertEqual(on["down"], 2048)
+        self.assertEqual(on["up"], 512)
+        self.assertEqual(on["rx"], 1048576)
+        self.assertGreaterEqual(on["secs"], 3599, "在线时长按 AccessRecord 推算")
+        off = by["AA:00:00:00:00:02"]
+        self.assertFalse(off["active"], "Active='0' 字符串不能误判成在线")
+        self.assertIsNone(off["secs"], "离线设备没有在线时长")
+        self.assertEqual(off["down"], 0, "离线设备不报残留速率")
+        self.assertEqual(off["rx"], 2048, "累计收发离线也保留（固件不清零）")
+
+    def test_session_expired_recovers(self):
+        """会话失效时自己重登再读一次，而不是把错误直接甩到页面上。
+
+        这条路径会比正常多一次 check_session（`_logged_in` 要先确认会话状态），
+        只在会话真掉的时候发生，例行轮询走不到这里。
+        """
+        node = self._node(expire_once=True)
+        res = node.traffic()
+        self.assertTrue(res["ok"])
+        self.assertEqual(node.router.calls,
+                         ["HostInfo", "check_session", "HostInfo"])
+
+    def test_router_error_is_soft(self):
+        """路由器报错时回 ok=False，不抛异常 —— 前端轮询要能安静跳过这一轮。"""
+        class Broken(NodeTrafficTest.FakeR):
+            def get(self, name, params=None):
+                raise RouterError("超时")
+        node = Node.__new__(Node)
+        cfg = Config(host="192.168.3.1", username="admin", password="x",
+                     session_file=None, rules=[])
+        node.router = Broken()
+        node.syncer = Syncer(cfg, node.router)
+        res = node.traffic()
+        self.assertFalse(res["ok"])
+        self.assertIn("超时", res["error"])
 
 
 class RulesOverlayTest(EnvSandbox):

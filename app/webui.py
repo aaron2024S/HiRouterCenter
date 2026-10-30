@@ -232,6 +232,9 @@ class WebUI:
                 return handler.send_json(self.node.whitelist())
             if method == "GET" and route == "/api/router/hosts":
                 return handler.send_json(self.node.hosts())
+            # 轻量：只读 HostInfo，只为设备卡上的实时速率/在线时长（设备页每 5 秒一次）
+            if method == "GET" and route == "/api/router/traffic":
+                return handler.send_json(self.node.traffic())
             if method == "POST" and route == "/api/wol":
                 res = self.node.wake_device(_json_body(body))
                 # 限频回 429：前端据此知道是「刚发过」而不是真失败

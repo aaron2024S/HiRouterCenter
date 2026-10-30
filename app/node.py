@@ -22,7 +22,7 @@ import time
 from . import (devtypes, discover, events, notify, notify_events, notify_presets,
                router_info, settings as st, tasks as tk, trustlist, wol)
 from .config import load_config
-from .router import HuaweiRouter, NotLoggedIn, RouterError
+from .router import HuaweiRouter, NotLoggedIn, RouterError, SessionExpired
 from .sync import Syncer
 
 log = logging.getLogger("ipv6sync.node")
@@ -1189,6 +1189,49 @@ class Node:
                                        else str(r.port)}
                               for r in _cfg(self).rules],
                     "power_mode": self._power_mode()}
+
+    def traffic(self) -> dict:
+        """设备卡上的实时流量（只在设备页可见时才该调）。
+
+        与 `hosts()` 的唯一区别是**成本**：这份只读 HostInfo 一个接口，
+        不查黑名单 / 白名单 / 拓扑。它每 5 秒被拉一次，只为让卡片上的
+        ↓↑ 速率、在线时长、累计量是真的在跳；返回体也只带会变的字段，
+        不重复传名字 / 地址 / 品牌这些不变的东西。
+
+        正常路径 **1 个路由器请求**：直接打 HostInfo，只有会话失效才回落
+        到 `_logged_in()` 走重登流程 —— 那个函数本身要探一次会话来判断，
+        例行轮询里能省就省。
+        """
+        with self.syncer.lock:
+            try:
+                raw = self.router.get("HostInfo") or []
+            except (NotLoggedIn, SessionExpired):
+                # 会话没了：走标准恢复路径（可能重登），然后重读一次
+                err = self._logged_in()
+                if err:
+                    return {"ok": False, "error": err}
+                try:
+                    raw = self.router.get("HostInfo") or []
+                except RouterError as e:
+                    return {"ok": False, "error": str(e)}
+            except RouterError as e:
+                return {"ok": False, "error": str(e)}
+            out = []
+            for h in raw:
+                if not isinstance(h, dict):
+                    continue
+                active = _truthy(h.get("Active"))
+                out.append({
+                    "mac": h.get("MACAddress", "") or "",
+                    "active": active,
+                    "secs": _online_secs(h) if active else None,
+                    "down": _kbps_of(h, "DownRate") if active else 0,
+                    "up": _kbps_of(h, "UpRate") if active else 0,
+                    # 累计收发离线也保留（固件不清零），和设备卡上的口径一致
+                    "rx": _kbps_of(h, "RxKBytes"),
+                    "tx": _kbps_of(h, "TxKBytes"),
+                })
+            return {"ok": True, "hosts": out}
 
     # ---------------- 网络唤醒（设备列表的「唤醒」按钮） ----------------
 

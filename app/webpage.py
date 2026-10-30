@@ -1570,6 +1570,7 @@ $('#lgForm').addEventListener('submit', async e => {
 $('#btnLogout').addEventListener('click', async () => {
   try { await api('/api/logout', {}); } catch (e) { /* 已掉线也算退出 */ }
   S.authed = false;
+  stopPolling();
   showGate();
 });
 
@@ -1624,6 +1625,52 @@ async function loadHosts() {
   renderDevices();
   renderCounts();
   renderTypeFilter();
+}
+
+/* ---------------- 设备卡实时流量轮询 ----------------
+   只为让卡片上的 ↓↑ 速率、在线时长、累计量是真的在跳（原先是死的：只有用户
+   主动点刷新/切页面才会变一次）。
+   关键约束：**不重建卡片**。按 data-mac 认领卡片，只替换 .dev-flow 里的文字，
+   所以不会闪、不会丢 hover、不会把滚动位置弹走。
+   上下线状态变了才交回 loadHosts 全量刷新 —— 那种情况卡片结构本身要变
+   （灰掉、插「最后在线」行），局部改不干净。 */
+let _trafficBusy = false;
+function applyTraffic(rows) {
+  if (!S.hosts || !S.hosts.ok) return;
+  const byMac = new Map();
+  for (const r of rows) byMac.set(macKey(r.mac), r);
+  const mine = new Map();
+  for (const d of (S.hosts.hosts || [])) mine.set(macKey(d.mac), d);
+  let stale = false;
+  $$('#devGrid .dev[data-mac]').forEach(card => {
+    const k = card.dataset.mac;
+    const r = byMac.get(k), d = mine.get(k);
+    if (!r || !d) return;
+    if (!!r.active !== !!d.active) { stale = true; return; }   // 上下线 → 整体重排
+    d.online_secs = r.secs;
+    d.down_kb = r.down;
+    d.up_kb = r.up;
+    d.rx_kb = r.rx;
+    d.tx_kb = r.tx;
+    const f = card.querySelector('.dev-flow');
+    if (!f) { if (flowHtml(d)) stale = true; return; }
+    const html = flowHtml(d);
+    if (f.innerHTML !== html) f.innerHTML = html;
+  });
+  if (stale) loadHosts();
+}
+async function refreshTraffic() {
+  /* 只有停在设备页、且标签页在前台时才拉 —— 后台标签页不白占路由器的请求。
+     `!S.authed` 兜住会话过期：`api()` 收到 401 会弹回登录门并把 authed 置 false，
+     不然这里会一直每 5 秒撞一次 401。 */
+  if (!S.authed || S.page !== 'devices') return;
+  if (document.visibilityState !== 'visible') return;
+  if (_trafficBusy) return;
+  _trafficBusy = true;
+  try {
+    const t = await api('/api/router/traffic').catch(() => null);
+    if (t && t.ok) applyTraffic(t.hosts || []);
+  } finally { _trafficBusy = false; }
 }
 function renderInfo() {
   const box = $('#riName'), sub = $('#riSub'), badge = $('#riBadge'), grid = $('#riGrid');
@@ -1824,6 +1871,23 @@ function isWifiHost(d) {
   const k = ifaceKey(d);
   return k === '2.4GHZ' || k === '5GHZ' || k === 'WIFI7-MLD';
 }
+/* 设备卡底部的「在线时长 + ↓↑ + 累计」整块 HTML。
+   抽出来是为了让 renderDevices 和 refreshTraffic 共用同一份拼装逻辑 ——
+   否则轮询和重建两处写法一漂移，卡片上的数字在刷新前后就会对不上。 */
+function flowHtml(d) {
+  const cum = (d.rx_kb || d.tx_kb)
+    ? '<span class="cum" title="路由器统计的累计收发流量">· 累计 ↓ '
+      + escHtml(fmtBytes(d.rx_kb)) + ' ↑ ' + escHtml(fmtBytes(d.tx_kb)) + '</span>'
+    : '';
+  if (d.active) {
+    const bits = [];
+    if (d.online_secs != null) bits.push('在线 ' + escHtml(fmtDur(d.online_secs)));
+    bits.push('<span title="路由器实时上报的下载速率">↓ ' + escHtml(fmtRate(d.down_kb)) + '</span>');
+    bits.push('<span title="路由器实时上报的上传速率">↑ ' + escHtml(fmtRate(d.up_kb)) + '</span>');
+    return bits.join('<span class="dotsep"></span>') + cum;
+  }
+  return cum ? cum.replace('· ', '') : '';
+}
 function renderDevices() {
   const grid = $('#devGrid');
   const h = S.hosts;
@@ -1839,6 +1903,8 @@ function renderDevices() {
   for (const d of list) {
     const black = bl.has(macKey(d.mac));
     const card = el('div', 'dev' + (d.active ? '' : ' off') + (black ? ' black' : ''));
+    /* 轮询时靠它认领卡片：只改这块 DOM 里的数字，不重建整张卡 */
+    card.dataset.mac = macKey(d.mac);
     const head = el('div', 'dev-head');
     const av = el('button', 'avatar', tIcon(typeOf(d)));
     av.type = 'button';
@@ -1938,16 +2004,8 @@ function renderDevices() {
       : '';
     /* 在线时长 + 实时上下行。离线设备固件不返回速率，只显示上面那行「最后在线」，
        不硬凑一个 0 KB/s。 */
-    if (d.active) {
-      const bits = [];
-      if (d.online_secs != null) bits.push('在线 ' + escHtml(fmtDur(d.online_secs)));
-      bits.push('<span title="路由器实时上报的下载速率">↓ ' + escHtml(fmtRate(d.down_kb)) + '</span>');
-      bits.push('<span title="路由器实时上报的上传速率">↑ ' + escHtml(fmtRate(d.up_kb)) + '</span>');
-      const html = bits.join('<span class="dotsep"></span>') + cum;
-      foot.appendChild(el('div', 'dev-flow', html));
-    } else if (cum) {
-      foot.appendChild(el('div', 'dev-flow', cum.replace('· ', '')));
-    }
+    const flow = flowHtml(d);
+    if (flow) foot.appendChild(el('div', 'dev-flow', flow));
     const act = el('div', 'dev-act');
     act.innerHTML = (port == null
       ? '<span class="fwchip no" title="路由器 IPv6 白名单里没有这台设备的当前地址">未放行</span>'
@@ -3690,10 +3748,24 @@ $('#devShowNodes').addEventListener('change', e => {
 
 /* 轻量轮询：只拉内存里的状态（不打路由器） */
 let _pollTimer = null;
+let _trafficTimer = null;
 function startPolling() {
   if (_pollTimer) return;                 // 两条登录路径都调这里，只开一份
   _pollTimer = setInterval(refreshState, 5000);
+  /* 设备卡上的实时速率 / 在线时长：另开一条，5 秒一次。
+     和华为固件自己的 HostInfoTimer 同频（它也是 5s 拉一次 HostInfo），
+     单次只打 1 个路由器接口，比整页刷新便宜得多。 */
+  _trafficTimer = setInterval(refreshTraffic, 5000);
 }
+/* 退出登录必须停掉：不然这两条会一直打 401，还每次都把登录门再弹一遍 */
+function stopPolling() {
+  if (_pollTimer) { clearInterval(_pollTimer); _pollTimer = null; }
+  if (_trafficTimer) { clearInterval(_trafficTimer); _trafficTimer = null; }
+}
+/* 从后台标签页切回来时立刻补一次，不用干等下一轮 */
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'visible') refreshTraffic();
+});
 async function refreshState() {
   const st = await api('/api/state').catch(() => null);
   if (!st) return;
