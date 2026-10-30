@@ -825,6 +825,14 @@ class Node:
             if not _truthy(head.get("MACAddressControlEnabled")):
                 return {"ok": False,
                         "error": "路由器上的「MAC 地址过滤」总开关没开，先打开才能拉黑设备"}
+            # MacFilterPolicy：0 = 黑名单模式（名单里的是禁止的），1 = 白名单模式
+            # （只有名单里的能连）。真机取证：MEDUSA2-BR80 默认是 0。
+            # 白名单模式下往 BMACAddresses 里加设备固件会忽略，等于白加 —— 得先拒掉。
+            policy = head.get("MacFilterPolicy")
+            if policy is not None and _truthy(policy):
+                return {"ok": False,
+                        "error": "路由器现在是「白名单模式」：只有名单里的设备才能连 Wi-Fi，"
+                                 "往黑名单里加设备不会生效。请先在路由器上改成「黑名单模式」"}
             host_name = ""
             try:
                 host_name = discover.host_display_name(self._host_raw(mac))

@@ -508,11 +508,15 @@ ipv6sync/
 │   ├── webpage.py       控制台页面（单文件内联，零外部资源）
 │   └── main.py          入口：常驻轮询/单次执行/设备列表/健康检查/控制台
 ├── preview_console.py   本机预览控制台（开发辅助，不进镜像）
+├── docs/
+│   └── firmware-api.md  固件接口档案：171 条路由 + 56 个接口字段 + 能力表（真机取证）
 ├── offline/             离线镜像组装与校验（见 offline/README.md）
 └── tests/
-    ├── test_logic.py    同步核心 + 唤醒 + 计划任务（假路由器，119 项）
-    ├── test_notify.py   通知渠道 / 事件 / 静默 / 去重 / 历史（60 项）
-    └── test_webui.py    设置覆盖层 + 控制台（真起 HTTP 服务，94 项）
+    ├── test_logic.py    同步核心 + 唤醒 + 计划任务（假路由器）
+    ├── test_notify.py   通知渠道 / 事件 / 静默 / 去重 / 历史
+    ├── test_webui.py    设置覆盖层 + 控制台（真起 HTTP 服务）
+    ├── test_host_actions.py  设备卡字段 / 改名 / 限速 / 黑名单
+    └── test_mesh.py     Mesh 拓扑解析 / 节点排除 / 降级
 ```
 
 跑测试：
@@ -524,6 +528,10 @@ python -m unittest discover -s tests -t . -v
 ---
 
 ## 协议备忘（逆向自设备固件）
+
+> 完整的接口档案（171 条路由的可用性、56 个接口的字段清单、`modcap` 能力表、
+> 功能页映射）见 **[docs/firmware-api.md](docs/firmware-api.md)** —— 加新功能前先查那里，
+> 不用再去路由器上抓包。
 
 这些细节都是实机验证过的，改代码时别踩回去：
 
@@ -563,6 +571,21 @@ python -m unittest discover -s tests -t . -v
    还会留着设备已经不用了的旧地址。现在只留给控制台的「在线设备」页查 MAC。
    注意 `Ipv6Addrs` 常有两条以上（SLAAC 稳定地址 + RFC 4941 隐私临时地址），
    单数字段 `IPv6Address` 通常只是 `fe80::` 链路本地地址。
+
+7. **MAC 黑名单是 `ntwk/wlanfilterenhance`，不是 `fwmacfilter`**（后者本机型 404）
+   ```json
+   [{"MACAddressControlEnabled":true, "MacFilterPolicy":0,
+     "ID":"InternetGatewayDevice.X_Config.Wifi.Radio.1.Ssid.1.",
+     "FrequencyBand":"2.4GHz",
+     "WMACAddresses":[{"MACAddress":"...","HostName":"..."}],
+     "BMACAddresses":[]},  {…"FrequencyBand":"5GHz"…}]
+   ```
+   - 字段名是 **`WMACAddresses` / `BMACAddresses`**。固件 JS 里的 `WMacFilters`/`BMacFilters`
+     是前端 UI 的临时变量名，**不是 API 字段**
+   - **`MacFilterPolicy`：0 = 黑名单模式，1 = 白名单模式**。白名单模式下拉黑设备固件会忽略
+   - 数组固定 2 项（2.4G / 5G），**两个频段必须一起改**
+   - 容量看 `deviceinfo.MacFilterCapacity`（真机 256，不是 32）
+   - 这是 WLAN 层过滤，**只对无线生效**，有线/电力线设备拦不住
 
 ---
 

@@ -237,6 +237,42 @@ class Blacklist(unittest.TestCase):
         self.assertFalse(res["ok"])
         self.assertIn("总开关", res["error"])
 
+    def test_rejects_when_router_is_whitelist_mode(self):
+        """MacFilterPolicy=1 是白名单模式，这时往黑名单加设备固件会忽略 —— 必须拒掉。
+
+        真机取证：ntwk/wlanfilterenhance 返回两个频段对象，字段为
+        MACAddressControlEnabled / MacFilterPolicy / FrequencyBand /
+        WMACAddresses / BMACAddresses；MEDUSA2-BR80 出厂 MacFilterPolicy=0（黑名单模式）。
+        """
+        wl = [{"MACAddressControlEnabled": True, "MacFilterPolicy": 1,
+               "FrequencyBand": "2.4GHz", "WMACAddresses": [], "BMACAddresses": []},
+              {"MACAddressControlEnabled": True, "MacFilterPolicy": 1,
+               "FrequencyBand": "5GHz", "WMACAddresses": [], "BMACAddresses": []}]
+        router = FakeRouter(hosts=[dict(HOST)], wl=wl)
+        res = make_node(router).set_host_blacklist(HOST["MACAddress"], True)
+        self.assertFalse(res["ok"])
+        self.assertIn("白名单模式", res["error"])
+        self.assertEqual(router.posts, [], "白名单模式下不该发出写入请求")
+
+    def test_blacklist_mode_policy_zero_still_works(self):
+        """MacFilterPolicy=0 是黑名单模式（真机默认），不能被误判成白名单。"""
+        wl = [{"MACAddressControlEnabled": True, "MacFilterPolicy": 0,
+               "FrequencyBand": "2.4GHz", "WMACAddresses": [], "BMACAddresses": []},
+              {"MACAddressControlEnabled": True, "MacFilterPolicy": 0,
+               "FrequencyBand": "5GHz", "WMACAddresses": [], "BMACAddresses": []}]
+        router = FakeRouter(hosts=[dict(HOST)], wl=wl)
+        res = make_node(router).set_host_blacklist(HOST["MACAddress"], True)
+        self.assertTrue(res["ok"], res.get("error"))
+        self.assertEqual(len(router.posts), 1)
+
+    def test_missing_policy_field_is_not_treated_as_whitelist(self):
+        """老固件可能没有 MacFilterPolicy 字段，不能因此拒掉。"""
+        wl = [{"MACAddressControlEnabled": True, "WMACAddresses": [], "BMACAddresses": []},
+              {"MACAddressControlEnabled": True, "WMACAddresses": [], "BMACAddresses": []}]
+        res = make_node(FakeRouter(hosts=[dict(HOST)], wl=wl)).set_host_blacklist(
+            HOST["MACAddress"], True)
+        self.assertTrue(res["ok"], res.get("error"))
+
     def test_capacity_limited(self):
         full = [{"MACAddress": "00:00:00:00:00:%02X" % i, "HostName": ""} for i in range(32)]
         wl = [{"MACAddressControlEnabled": True, "WMACAddresses": [], "BMACAddresses": list(full)},
