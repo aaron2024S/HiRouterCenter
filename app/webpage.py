@@ -1076,7 +1076,7 @@ html[data-theme="light"] .tpick-mask{background:rgba(30,34,56,.34)}
         <div class="optbar" id="devOptBar" hidden>
           <span id="devOptTxt"></span>
           <button class="txtbtn" type="button" id="devAll" hidden>查看全部</button>
-          <label for="devShowNodes"><input type="checkbox" id="devShowNodes" checked>显示 Mesh 节点卡片</label>
+          <label for="devShowNodes"><input type="checkbox" id="devShowNodes">显示 Mesh 节点卡片</label>
         </div>
 
         <div class="filterrow">
@@ -1521,8 +1521,9 @@ const S = {
   devFilter: 'all', devQuery: '', devType: 'all',
   /* Mesh 节点筛选：'all' = 不筛；'main' = 直连主路由（含拓扑里没写归属的）；
      其余是节点 MAC（norm 过的 12 位小写）。
-     节点卡是唯一的筛选入口（下拉已去掉），所以默认就展开，右侧勾选可收起。 */
-  devNode: 'all', showNodes: true,
+     节点卡是唯一的筛选入口（下拉已去掉），但**默认收起**：设备页首屏重点是
+     设备本身，节点卡要时勾上右侧「显示 Mesh 节点卡片」即可。 */
+  devNode: 'all', showNodes: false,
   page: 'devices', nTab: 'channels',
   loaded: {},          // 每页最后一次拉数据的时间，用来做缓存
 };
