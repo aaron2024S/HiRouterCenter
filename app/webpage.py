@@ -1517,7 +1517,7 @@ async function api(path, body) {
 const S = {
   authed: false, version: '',
   state: null, tasks: null, events: null, notify: null,
-  info: null, hosts: null, wl: null, hist: null,
+  info: null, hosts: null, wan: null, wl: null, hist: null,
   devFilter: 'all', devQuery: '', devType: 'all',
   /* Mesh 节点筛选：'all' = 不筛；'main' = 直连主路由（含拓扑里没写归属的）；
      其余是节点 MAC（norm 过的 12 位小写）。
@@ -1670,7 +1670,18 @@ async function refreshTraffic() {
   _trafficBusy = true;
   try {
     const t = await api('/api/router/traffic').catch(() => null);
-    if (t && t.ok) applyTraffic(t.hosts || []);
+    if (t && t.ok) {
+      /* 出口速率走同一个接口回来，顺手换掉信息卡那一格 —— 只动 innerHTML，
+         不重建整张卡（重建会把复制按钮的绑定和滚动位置都冲掉）。
+         读不到时 wan 是 null，也照常更新成「—」。 */
+      if (t.wan !== undefined) {
+        S.wan = t.wan;
+        const cell = document.querySelector('#riGrid [data-k="wan"] .v');
+        const html = wanHtml();
+        if (cell && cell.innerHTML !== html) cell.innerHTML = html;
+      }
+      applyTraffic(t.hosts || []);
+    }
   } finally { _trafficBusy = false; }
 }
 function renderInfo() {
@@ -1709,6 +1720,9 @@ function renderInfo() {
       + escHtml((info.harmony || info.firmware ? 'HarmonyOS ' : '') + fw) + '</span>'
     : '—';
   const cells = [
+    /* 路由器出口实时速率，排最前（LAN IPv4 之前）。第三个元素 'wan' 是标记，
+       让 5 秒轮询能只换这一格的文字，不必整卡重建。 */
+    ['实时速率', wanHtml(), 'wan'],
     ['LAN IPv4', info.lan_ip4
       ? '<button class="cp" data-cp="' + escAttr(info.lan_ip4) + '">' + svgI('copy')
         + '<span>' + escHtml(info.lan_ip4) + '</span></button>' : '—'],
@@ -1722,8 +1736,19 @@ function renderInfo() {
     ['Wi-Fi 名称', ssidHtml],
     ['运行时长', escHtml(info.uptime || '—')],
     ['固件版本', fwHtml],
-    ['在线设备', (S.info && S.info.hosts_total)
-      ? escHtml(S.info.hosts_online + ' 台（共 ' + S.info.hosts_total + ' 台）') : '—'],
+    /* 在线设备数用设备列表的活数据现算：/api/router/info 只在进页面时拉一次，
+       它带的 hosts_online 会凝固在那一秒 —— 页面开久了下面筛选条 22、
+       上面还写 20，就是这么来的。devRows() 每 5 秒随 traffic 轮询刷新，
+       和筛选条「在线 N」同一口径。hosts 还没拉到时才退回 info 里的快照。 */
+    ['在线设备', (() => {
+      const rows = devRows();
+      if (rows.length) {
+        const on = rows.filter(d => d.active).length;
+        return escHtml(on + ' 台（共 ' + rows.length + ' 台）');
+      }
+      return (S.info && S.info.hosts_total)
+        ? escHtml(S.info.hosts_online + ' 台（共 ' + S.info.hosts_total + ' 台）') : '—';
+    })()],
     ['同步规则', (() => {
       const n = (S.wl && S.wl.ok) ? (S.wl.rules || []).length
         : ((S.state && S.state.overview && (S.state.overview.rules || []).length) || 0);
@@ -1734,10 +1759,11 @@ function renderInfo() {
         : st.firewall_ipv6_enabled === false
           ? ' <span class="badge badge-plain" style="font-weight:400;margin-left:2px"><span class="dot"></span>已关闭</span>'
           : '')],
-    ['上次同步', escHtml(ago(st.last_success_at))],
+    /* 「上次同步」不放这里了：IPv6 防火墙页已经有一份，设备页这格是重复的 */
   ];
-  grid.innerHTML = cells.map(([k, v]) =>
-    '<div class="kv"><div class="k">' + k + '</div><div class="v mono">' + v + '</div></div>').join('');
+  grid.innerHTML = cells.map(([k, v, mark]) =>
+    '<div class="kv"' + (mark ? ' data-k="' + mark + '"' : '') + '><div class="k">' + k
+    + '</div><div class="v mono">' + v + '</div></div>').join('');
   $$('#riGrid .cp').forEach(bindCopy);
   const pm = info.power_mode;
   const names = { 0: '睡眠', 1: '一般', 2: '穿墙' };
@@ -1846,6 +1872,22 @@ function fmtDur(sec) {
 function fmtRate(kb) {
   const k = Math.max(0, Math.round(Number(kb) || 0));
   return k >= 1024 ? (k / 1024).toFixed(1) + ' MB/s' : k + ' KB/s';
+}
+/* 路由器出口速率：固件 `ntwk/wan` 的 `DownBandwidth` / `UpBandwidth`，单位 **KB/s**
+   （实机核对：↑1276 KB/s 对应固件首页显示 9.8 Mbps，即 ×8÷1024）。
+   和 fmtRate（设备卡的 KB/s → MB/s）、fmtLink（链路协商 Mbps）都不是一回事，别混。 */
+function fmtWan(kb) {
+  const kbps = Math.max(0, Number(kb) || 0) * 8;
+  if (kbps >= 102400) return (kbps / 1024).toFixed(0) + ' Mbps';   // ≥100M 取整，位数够看
+  if (kbps >= 1024) return (kbps / 1024).toFixed(2) + ' Mbps';
+  return Math.round(kbps) + ' Kbps';
+}
+/* 出口速率那一格的 HTML。读不到就给「—」，不硬凑 0。 */
+function wanHtml() {
+  const w = S.wan;
+  if (!w) return '—';
+  return '<span title="路由器出口的实时上下行（固件 ntwk/wan 统计，KB/s 换算）">↓ '
+    + escHtml(fmtWan(w.down)) + ' ↑ ' + escHtml(fmtWan(w.up)) + '</span>';
 }
 /* 链路协商速率：固件 rate 字段单位就是 Mbps（2500 = 2.5G 口）。
    和上面的 fmtRate 不是一回事，别混：那个是实时流量，这个是端口能力。 */
@@ -3777,8 +3819,10 @@ function startPolling() {
   _pollTimer = setInterval(refreshState, 5000);
   /* 设备卡上的实时速率 / 在线时长：另开一条，5 秒一次。
      和华为固件自己的 HostInfoTimer 同频（它也是 5s 拉一次 HostInfo），
-     单次只打 1 个路由器接口，比整页刷新便宜得多。 */
+     现在单次打 2 个路由器接口（HostInfo + ntwk/wan），比整页刷新便宜得多。
+     出口速率那一格也靠它刷，所以进页面先立刻拉一次，别留 5 秒空窗。 */
   _trafficTimer = setInterval(refreshTraffic, 5000);
+  refreshTraffic();
 }
 /* 退出登录必须停掉：不然这两条会一直打 401，还每次都把登录门再弹一遍 */
 function stopPolling() {

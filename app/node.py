@@ -1193,13 +1193,13 @@ class Node:
     def traffic(self) -> dict:
         """设备卡上的实时流量（只在设备页可见时才该调）。
 
-        与 `hosts()` 的唯一区别是**成本**：这份只读 HostInfo 一个接口，
+        与 `hosts()` 的唯一区别是**成本**：这份只读 HostInfo + ntwk/wan 两个接口，
         不查黑名单 / 白名单 / 拓扑。它每 5 秒被拉一次，只为让卡片上的
-        ↓↑ 速率、在线时长、累计量是真的在跳；返回体也只带会变的字段，
-        不重复传名字 / 地址 / 品牌这些不变的东西。
+        ↓↑ 速率、在线时长、累计量、以及路由器出口的上下行是真的在跳；
+        返回体也只带会变的字段，不重复传名字 / 地址 / 品牌这些不变的东西。
 
-        正常路径 **1 个路由器请求**：直接打 HostInfo，只有会话失效才回落
-        到 `_logged_in()` 走重登流程 —— 那个函数本身要探一次会话来判断，
+        正常路径 **2 个路由器请求**：直接打 HostInfo 和 ntwk/wan，只有会话失效
+        才回落到 `_logged_in()` 走重登流程 —— 那个函数本身要探一次会话来判断，
         例行轮询里能省就省。
         """
         with self.syncer.lock:
@@ -1231,7 +1231,22 @@ class Node:
                     "rx": _kbps_of(h, "RxKBytes"),
                     "tx": _kbps_of(h, "TxKBytes"),
                 })
-            return {"ok": True, "hosts": out}
+            # WAN 出口的实时上下行（固件首页那个「我的网络」卡片就是它）。
+            # 单位 **KB/s**：实测 ↑1276 KB/s 对应固件显示 9.8 Mbps，即 ×8÷1024。
+            # 响应里有宽带账号明文（Username），这里只取两个数值，绝不外传。
+            # 读不到不算失败 —— 设备卡的流量才是这个接口的主体。
+            wan = None
+            try:
+                body = self.router.get("ntwk/wan")
+                conn = body[0] if isinstance(body, list) and body else body
+                if isinstance(conn, dict):
+                    wan = {"down": _kbps_of(conn, "DownBandwidth"),
+                           "up": _kbps_of(conn, "UpBandwidth")}
+            except RouterError as e:
+                # 含 NotLoggedIn / SessionExpired：不在这里重登 —— 为了一个附加字段
+                # 多走一次登录不值得，下一轮（或设备卡读失败时）自然会触发恢复。
+                log.debug("读 WAN 出口速率失败（不影响设备流量）：%s", e)
+            return {"ok": True, "hosts": out, "wan": wan}
 
     # ---------------- 网络唤醒（设备列表的「唤醒」按钮） ----------------
 

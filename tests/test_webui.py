@@ -1228,10 +1228,16 @@ class NodeTrafficTest(EnvSandbox):
     """
 
     class FakeR:
-        def __init__(self, hosts=None, expire_once=False):
+        def __init__(self, hosts=None, expire_once=False, wan=None, wan_broken=False):
             self.logged_in = True
             self.calls = []
             self.expire_once = expire_once
+            self.wan_broken = wan_broken
+            self.wan = wan if wan is not None else [
+                # 真实响应里还带 Username（宽带账号明文），这里故意留着，
+                # 用来盯住「只取两个数值、别把整个响应外传」这条
+                {"Username": "13800000000", "DownBandwidth": 254, "UpBandwidth": 1276}
+            ]
             self.hosts = hosts if hosts is not None else [
                 {"MACAddress": "AA:00:00:00:00:01", "Active": 1,
                  "DownRate": 2048, "UpRate": 512,
@@ -1248,6 +1254,10 @@ class NodeTrafficTest(EnvSandbox):
 
         def get(self, name, params=None):
             self.calls.append(name)
+            if name == "ntwk/wan":
+                if self.wan_broken:
+                    raise RouterError("wan 超时")
+                return self.wan
             if name != "HostInfo":
                 raise AssertionError("traffic 不该读 " + name)
             if self.expire_once:
@@ -1264,11 +1274,14 @@ class NodeTrafficTest(EnvSandbox):
         return node
 
     def test_only_one_router_call(self):
-        """正常路径只打 HostInfo：不探会话、不读黑名单 / 白名单 / 拓扑。"""
+        """正常路径只打 HostInfo + ntwk/wan：不探会话、不读黑名单 / 白名单 / 拓扑。
+
+        设备页信息卡第一格是「路由器出口实时速率」，所以 ntwk/wan 是必需的第二枪；
+        再多一个接口都会让它退化成 hosts()，这里必须红。
+        """
         node = self._node()
         node.traffic()
-        self.assertEqual(node.router.calls, ["HostInfo"],
-                         "例行轮询多打任何一个接口都会让它退化成 hosts()")
+        self.assertEqual(node.router.calls, ["HostInfo", "ntwk/wan"])
 
     def test_online_and_offline_fields(self):
         node = self._node()
@@ -1297,7 +1310,24 @@ class NodeTrafficTest(EnvSandbox):
         res = node.traffic()
         self.assertTrue(res["ok"])
         self.assertEqual(node.router.calls,
-                         ["HostInfo", "check_session", "HostInfo"])
+                         ["HostInfo", "check_session", "HostInfo", "ntwk/wan"])
+        self.assertEqual(res["wan"], {"down": 254, "up": 1276},
+                         "出口速率单位 KB/s，原样透出，不做换算")
+
+    def test_wan_shape_and_no_leak(self):
+        """出口速率只透出 down/up 两个数：响应里的宽带账号（Username）绝不外传。"""
+        node = self._node()
+        res = node.traffic()
+        self.assertEqual(res["wan"], {"down": 254, "up": 1276})
+        self.assertNotIn("13800000000", str(res), "宽带账号不能跟着轮询回传")
+
+    def test_wan_error_does_not_break_traffic(self):
+        """ntwk/wan 挂了只让那一格变「—」，设备卡流量照旧返回。"""
+        node = self._node(wan_broken=True)
+        res = node.traffic()
+        self.assertTrue(res["ok"], "读不到出口速率不算整体失败")
+        self.assertIsNone(res["wan"])
+        self.assertEqual(len(res["hosts"]), 2, "设备流量不能跟着一起丢")
 
     def test_router_error_is_soft(self):
         """路由器报错时回 ok=False，不抛异常 —— 前端轮询要能安静跳过这一轮。"""
