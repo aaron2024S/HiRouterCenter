@@ -1076,7 +1076,7 @@ html[data-theme="light"] .tpick-mask{background:rgba(30,34,56,.34)}
         <div class="optbar" id="devOptBar" hidden>
           <span id="devOptTxt"></span>
           <button class="txtbtn" type="button" id="devAll" hidden>查看全部</button>
-          <label for="devShowNodes"><input type="checkbox" id="devShowNodes">显示 Mesh 节点卡片</label>
+          <label for="devShowNodes"><input type="checkbox" id="devShowNodes" checked>显示 Mesh 节点卡片</label>
         </div>
 
         <div class="filterrow">
@@ -2237,9 +2237,18 @@ function renderMesh() {
   if (!bar || !box) return;
   const nodes = meshNodes();
   if (!nodes.length) {
+    /* 读不到设备数据（首次还没加载完 / 这次请求失败）就保持原样：既不清掉
+       已经显示出来的节点卡，也不动这个开关。
+       原来是无条件 `S.showNodes = false` —— 一次网络抖动就把节点卡永久关掉，
+       之后恢复正常也不会自己打开（只能刷新整页），而且提前 return 连勾选框
+       都没同步，页面上会出现「勾着却看不到卡片」的矛盾状态。 */
+    if (!S.hosts || !S.hosts.ok) return;
+    /* 确实读到了设备列表、里面确实没有拓扑节点（固件不支持 mesh）才关掉 */
     bar.hidden = true; box.hidden = true;
     box.innerHTML = '';
     S.devNode = 'all'; S.showNodes = false;
+    const c0 = $('#devShowNodes');
+    if (c0) c0.checked = false;
     return;
   }
   const rows = devRows();
