@@ -142,8 +142,8 @@ class Syncer:
         # 没配密码（纯网页首次部署的初始状态）：绝不能拿空密码去撞登录，
         # 停在「未配置」状态等用户在网页里填，错误信息要能直接指路。
         if not self.cfg.password:
-            self.last_error = ("未配置路由器密码 —— 打开浏览器控制台，"
-                               "在「路由器连接」里填好密码即可开始同步")
+            self.last_error = ("未配置路由器密码 —— 在「设置 → 路由器连接」"
+                               "里填好密码即可开始同步")
             return False
 
         now = time.time()

@@ -670,7 +670,7 @@ class UnconfiguredStandbyTest(unittest.TestCase):
         s = self.make()
         self.assertFalse(s.ensure_login())
         self.assertIn("未配置路由器密码", s.last_error)
-        self.assertIn("控制台", s.last_error)
+        self.assertIn("路由器连接", s.last_error)
 
     def test_tick_unconfigured_is_not_a_failure(self):
         s = self.make()

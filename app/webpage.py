@@ -3821,18 +3821,23 @@ async function loadSettings() {
   if (st) { S.state = st; }
   renderSettings();
 }
-/* 设置页的脏标记：用户动过任何一个字段就暂停轮询重绘。
-   renderSettings() 是整表重建，5 秒一轮的 refreshState 若照常跑，
-   正在输入的密码/数字会在敲到一半时被冲掉（实测血案）。 */
-let setDirty = false;
-function markSetDirty() { setDirty = true; }
+/* 连接徽标：轮询里唯一需要动的东西。表单字段绝不在这里重建 ——
+   设置内容只有本页能改，轮询重建除了把用户打到一半的输入冲掉没有任何收益。 */
+function renderConnBadge() {
+  const ov = (S.state && S.state.overview) || {};
+  const ready = ov.password_set;
+  const okConn = !!(S.info && S.info.ok);
+  const badge = $('#connBadge');
+  badge.className = 'badge ' + (okConn ? 'badge-run' : 'badge-plain');
+  badge.innerHTML = '<span class="dot"></span>'
+    + (!ready ? '未配置密码' : (okConn ? '连接正常' : '未连接'));
+}
 function renderSettings() {
   const st = S.state;
   if (!st) return;
   const ov = st.overview || {};
   $('#routerSub').textContent = [ov.router_host, ov.router_user].filter(Boolean).join(' · ');
   const groups = st.settings || [];
-  const host = (S.info && S.info.info) || {};
   $('#routerFields').innerHTML = '';
   $('#behaviorFields').innerHTML = '';
   groups.forEach(g => {
@@ -3841,12 +3846,7 @@ function renderSettings() {
     if (!holder) return;
     (g.fields || []).forEach(f => holder.appendChild(fieldRow(f)));
   });
-  setDirty = false;    // 重建完成，恢复轮询刷新
-  const ready = ov.password_set;
-  const badge = $('#connBadge');
-  const okConn = !!(S.info && S.info.ok);
-  badge.className = 'badge ' + (okConn ? 'badge-run' : 'badge-plain');
-  badge.innerHTML = '<span class="dot"></span>' + (okConn ? '连接正常' : (ready ? '未连接' : '未配置密码'));
+  renderConnBadge();
 }
 function fieldRow(f) {
   const row = el('div', 'fieldrow');
@@ -3885,14 +3885,6 @@ function fieldRow(f) {
   row.appendChild(ctl);
   return row;
 }
-/* 用户改任何字段 → 标脏：轮询暂停重绘，直到保存成功或离开本页 */
-$('#p-router').addEventListener('input', markSetDirty);
-$('#p-router').addEventListener('change', markSetDirty);
-$('#p-router').addEventListener('click', (e) => {
-  const sw = e.target.closest('.sw');      // 布尔开关不走 input/change 事件
-  if (sw) markSetDirty();
-});
-
 $('#btnSaveSettings').addEventListener('click', async () => {
   const patch = {};
   $$('#p-router [data-key]').forEach(n => {
@@ -3996,7 +3988,6 @@ $$('.ni[data-page]').forEach(b => b.addEventListener('click', () => {
   b.setAttribute('aria-current', 'true');
   const p = b.dataset.page;
   S.page = p;
-  if (p !== 'router') setDirty = false;    // 离开设置页：未保存的修改就地放弃
   $$('.page').forEach(x => x.classList.add('hide'));
   document.getElementById('p-' + p).classList.remove('hide');
   document.getElementById('ctx').textContent = CTX_TEXT[p] || '';
@@ -4103,7 +4094,7 @@ async function refreshState() {
   renderCounts();
   if (S.page === 'devices') renderInfo();
   if (S.page === 'firewall') renderFwKv();
-  if (S.page === 'router' && !setDirty) renderSettings();   // 脏了就让位给用户输入
+  if (S.page === 'router') renderConnBadge();   // 只刷徽标，表单字段不动
   if (S.page === 'about') renderAbout();
 }
 
