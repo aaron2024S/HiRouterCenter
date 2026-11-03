@@ -153,8 +153,8 @@ class Config:
     # --- Web 控制台 ---
     web_host: str = "0.0.0.0"
     web_port: int = 6600               # 0 = 不启动控制台（与 PORT 的默认值保持一致）
-    web_user: str = "admin"            # ADMIN_USERNAME
-    web_password: str = ""             # ADMIN_PASSWORD；空 = 不启动控制台（安全默认）
+    # 登录凭据不走配置/环境变量：首次打开网页时创建管理员，落在
+    # settings_file 同目录的 auth.json（见 app/auth.py）。
     web_session_ttl: int = 12 * 3600
 
     # --- 运行时设置覆盖层（网页保存的文件） ---
@@ -269,8 +269,6 @@ def load_config(argv: list[str] | None = None) -> Config:
         log_json=_env_bool("LOG_JSON", False),
         web_host=_env("WEB_HOST", "0.0.0.0"),
         web_port=_env_int("PORT", 6600),
-        web_user=_env("ADMIN_USERNAME", "admin") or "admin",
-        web_password=_env_secret("ADMIN_PASSWORD"),
         web_session_ttl=_env_int("WEB_SESSION_TTL", 12 * 3600),
         settings_file=settings_file,
         state_file=_env("STATE_FILE", "") or _default_state_file(settings_file),
@@ -374,20 +372,19 @@ HELP = """\
                          直接粘贴整个 webhook 地址也行
 
 Web 控制台（浏览器里改设置）:
-  ADMIN_USERNAME         控制台登录用户名，默认 admin
-  ADMIN_PASSWORD         控制台登录密码，写进 compose 的 environment；
-                         不设就不启动控制台（安全默认）
-  ADMIN_PASSWORD_FILE    改从文件读控制台密码（Docker secret）
   PORT                   控制台端口，默认 6600；0 = 关闭（compose: - PORT=3500）
   WEB_HOST               控制台监听地址，默认 0.0.0.0
   WEB_SESSION_TTL        登录有效期（秒），默认 43200
+  AUTH_FILE              管理员凭据文件，默认与 SETTINGS_FILE 同目录的 auth.json。
+                         登录账号**不用环境变量设**：首次打开网页会要求创建管理员，
+                         之后该入口永久关闭。忘记密码 = 删掉 auth.json 重启容器。
   SETTINGS_FILE          网页保存的设置文件，默认 /data/settings.json
                          优先级：网页设置 > 环境变量 > 默认值
   STATE_FILE             累计写入计数的落盘位置，默认与 SETTINGS_FILE 同目录
                          的 state.json。放在卷里，容器重启后「累计写入」不归零
 
-首次部署推荐流程：compose 里只给 ADMIN_USERNAME / ADMIN_PASSWORD，
-其余（路由器地址/密码、NAS MAC、检测周期…）打开网页控制台填，改完即生效。
+首次部署流程：容器起来后浏览器打开 http://<NAS_IP>:6600，按页面提示创建管理员，
+其余（路由器地址/密码、NAS MAC、检测周期…）都在网页控制台里填，改完即生效。
 
 命令行:
   --once        跑一轮就退出（配合 cron / 计划任务）

@@ -1,10 +1,10 @@
 # 华为路由器 IPv6 防火墙白名单同步
 #
-# 部署（全程不用 .env）：
-#   1) 改下面 environment 里的 ADMIN_USERNAME / ADMIN_PASSWORD（控制台登录账号）
-#   2) docker compose up -d --build
-#   3) 浏览器打开 http://<本机IP>:6600/ ，用上面两个变量登录
-#   4) 在网页「路由器连接」里填 路由器地址 / 管理员密码，保存即开始同步
+# 部署（全程不用 .env，也不用设登录密码）：
+#   1) docker compose up -d --build
+#   2) 浏览器打开 http://<本机IP>:6600/ —— 首次打开会要求创建管理员账户
+#      （创建入口只在这一刻开放，之后永久关闭；忘记密码就删 data/auth.json 重启）
+#   3) 在网页「路由器连接」里填 路由器地址 / 管理员密码，保存即开始同步
 #      —— 其余所有设置（NAS 的 MAC、检测周期等）都在网页里改，
 #         存进 /data/settings.json，改完热生效，不用重建容器。
 #
@@ -21,10 +21,7 @@ services:
     container_name: ipv6sync
     restart: unless-stopped
 
-    # 唯一需要在 yaml 里设置的东西：浏览器控制台的登录账号
     environment:
-      - ADMIN_USERNAME=admin
-      - ADMIN_PASSWORD=change-me-please
       # 计划任务按容器本地时间执行。不设这一行，容器默认跑 UTC，
       # 你填的 04:30 会变成北京时间 12:30。可按需改成自己的时区。
       - TZ=${TZ:-Asia/Shanghai}

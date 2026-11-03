@@ -3,21 +3,21 @@
 Web 控制台
 
 一个很小的 HTTP 服务，只做两件事：
-  1. 用一个登录口令把入口关起来（ADMIN_USERNAME / ADMIN_PASSWORD，
-     写在 compose 的 environment 里）
+  1. 用管理员账号把入口关起来（首次打开网页时创建，落在 auth.json，
+     scrypt 哈希；不使用任何环境变量设密码）
   2. 提供查看与修改设置的接口，改完热生效，不用重建容器
 
 安全上的取舍（都是有意的，不是漏的）：
-  · 默认**不启动**：没配 ADMIN_PASSWORD 就不开端口，日志里写明原因。
-    一个默认开放、能改路由器密码的后台比"没这个功能"危险得多。
-  · 口令用 hmac.compare_digest 比较（常量时间），用户名和密码都走同一条比较路径，
-    不让人从响应快慢里猜出"用户名对不对"。
+  · 控制台端口只要 PORT>0 就启动；还没创建管理员时只开放「创建管理员」两个
+    路由，创建成功后该入口永久关闭（403）。「重置」= 删 auth.json 重启容器。
+  · 口令存 scrypt 哈希（app/auth.py），登录比较走 hmac.compare_digest（常量时间），
+    用户名和密码都走同一条比较路径，不让人从响应快慢里猜出"用户名对不对"。
   · 登录防爆破，三层：单 IP 5 分钟窗口内错 8 次即锁定 → 反复触发锁定时间逐次翻倍
     （5 分钟起步，上限 6 小时）；所有来源合计错 60 次则全局熔断一个窗口（防换 IP 分摊）；
     每次登录校验前恒定延时 0.25 秒（拉平响应时间、拖慢脚本）。锁定期间密码对也不放行，
     登录成功即清零。
   · 会话令牌只放内存（重启即失效），Cookie 带 HttpOnly + SameSite=Lax；
-    勾选「保持登录(7天)」时令牌与 Cookie 均按 7 天有效期签发。
+    勾选「保持登录(7天)」时令牌与 Cookie 均按 7 天有效期签发。改密码后其他会话作废。
   · 改状态的请求要求 Content-Type 为 application/json 且 Origin（若有）与 Host 一致
     —— 跨站的 form 表单发不出 application/json，配合 SameSite 足够挡掉 CSRF。
   · 不监听 0.0.0.0 之外的地址也做不到（容器里必须），所以文档里写明：
@@ -54,13 +54,20 @@ CSP = ("default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline
 
 
 class WebUI:
-    def __init__(self, node, host: str, port: int, user: str, password: str,
+    """控制台 HTTP 服务。
+
+    登录凭据不再来自环境变量：管理员账号在**首次打开网页时创建**，落在
+    `auth_file`（auth.json，scrypt 哈希）。文件不存在 = 还没初始化，
+    只开放「创建管理员」两个路由；创建成功后永久关闭。
+    """
+
+    def __init__(self, node, host: str, port: int, auth_file: str,
                  session_ttl: int = 12 * 3600):
+        from .auth import AuthStore
         self.node = node
         self.host = host
         self.port = port
-        self.user = user or "admin"
-        self._password = password or ""
+        self.auth = AuthStore(auth_file)
         self.session_ttl = max(300, int(session_ttl))
         self.REMEMBER_TTL = max(self.session_ttl, 7 * 24 * 3600)  # 保持登录：7 天
 
@@ -75,14 +82,13 @@ class WebUI:
     # ---------------- 会话 ----------------
 
     def enabled(self) -> bool:
-        return bool(self._password) and self.port > 0
+        return self.port > 0
+
+    def setup_done(self) -> bool:
+        return self.auth.exists()
 
     def _check_credentials(self, user: str, password: str) -> bool:
-        u_ok = hmac.compare_digest((user or "").encode("utf-8"),
-                                   self.user.encode("utf-8"))
-        p_ok = hmac.compare_digest((password or "").encode("utf-8"),
-                                   self._password.encode("utf-8"))
-        return bool(u_ok and p_ok)
+        return self.auth.verify(user, password)
 
     def _new_token(self, user: str, ttl: int | None = None) -> str:
         tok = secrets.token_urlsafe(32)
@@ -178,6 +184,15 @@ class WebUI:
             return handler.send_json({"name": "HiRouterCenter",
                                       "version": _version()})
 
+        # ---- 初始化：只在「还没有管理员」时开放，创建成功后永久关闭 ----
+        if method == "GET" and route == "/api/setup-status":
+            return handler.send_json({"setupDone": self.setup_done(),
+                                      "username": self.auth.username(),
+                                      "version": _version()})
+
+        if method == "POST" and route == "/api/setup":
+            return self._setup(handler, body, ip)
+
         if method == "POST" and route == "/api/login":
             return self._login(handler, body, ip)
 
@@ -191,7 +206,11 @@ class WebUI:
             return
 
         if method == "GET" and route == "/api/session":
-            return handler.send_json({"authed": bool(user), "user": user or ""})
+            return handler.send_json({"authed": bool(user), "user": user or "",
+                                      "setupDone": self.setup_done()})
+
+        if method == "POST" and route == "/api/password":
+            return self._change_password(handler, body, user, token)
 
         if not user:
             # 未登录：状态类接口温和地回 authed=false，动作类接口直接 401
@@ -349,15 +368,16 @@ class WebUI:
             return handler.send_json({"ok": False, "error": str(e)}, 400)
 
         time.sleep(0.25)   # 恒定延时：拉平正确/错误口令的响应时间，也拖慢脚本化尝试
+        user = self.auth.username()
         if self._check_credentials(str(data.get("user", "")),
                                    str(data.get("password", ""))):
             self._clear_fails(ip)
             ttl = self.REMEMBER_TTL if data.get("remember") else self.session_ttl
-            tok = self._new_token(self.user, ttl)
+            tok = self._new_token(user, ttl)
             log.info("控制台登录成功，来源 %s（会话 %s）",
                      ip, "7天" if data.get("remember") else f"{self.session_ttl // 3600}小时")
             return handler.send_json(
-                {"ok": True, "user": self.user},
+                {"ok": True, "user": user},
                 extra_headers=[("Set-Cookie",
                                 f"ipv6sync_web={tok}; Path=/; HttpOnly; SameSite=Lax; "
                                 f"Max-Age={ttl}")])
@@ -366,17 +386,68 @@ class WebUI:
         log.warning("控制台登录失败，来源 %s", ip)
         return handler.send_json({"ok": False, "error": "用户名或密码不对"}, 401)
 
+    def _setup(self, handler, body: bytes, ip: str):
+        """首次创建管理员。只允许一次：auth.json 存在后这里永远 403。"""
+        if self.setup_done():
+            return handler.send_json(
+                {"ok": False, "error": "管理员已创建，请直接登录"}, 403)
+        try:
+            data = _json_body(body)
+        except ValueError as e:
+            return handler.send_json({"ok": False, "error": str(e)}, 400)
+        if str(data.get("password", "")) != str(data.get("password2", "")):
+            return handler.send_json({"ok": False, "error": "两次输入的密码不一致"}, 400)
+        try:
+            rec = self.auth.create(str(data.get("user", "")),
+                                   str(data.get("password", "")))
+        except ValueError as e:            # AuthError：用户名 / 密码强度问题
+            return handler.send_json({"ok": False, "error": str(e)}, 400)
+        except OSError as e:
+            log.error("写入 auth.json 失败：%s", e)
+            return handler.send_json(
+                {"ok": False, "error": "凭据写入失败，请检查 data 目录权限"}, 500)
+        log.info("管理员 %s 已创建（来源 %s）—— 初始化入口从此关闭", rec["username"], ip)
+        tok = self._new_token(rec["username"], self.session_ttl)
+        return handler.send_json(
+            {"ok": True, "user": rec["username"]},
+            extra_headers=[("Set-Cookie",
+                            f"ipv6sync_web={tok}; Path=/; HttpOnly; SameSite=Lax; "
+                            f"Max-Age={self.session_ttl}")])
+
     # ---------------- 启动 ----------------
+
+    def _change_password(self, handler, body: bytes, user: str, token: str):
+        """已登录改密。成功后作废**其他**会话（当前浏览器不掉线）。"""
+        try:
+            data = _json_body(body)
+        except ValueError as e:
+            return handler.send_json({"ok": False, "error": str(e)}, 400)
+        try:
+            self.auth.update_password(str(data.get("old", "")),
+                                      str(data.get("new", "")))
+        except ValueError as e:            # AuthError：旧密码不对 / 新密码太弱
+            return handler.send_json({"ok": False, "error": str(e)}, 400)
+        except OSError as e:
+            log.error("写 auth.json 失败：%s", e)
+            return handler.send_json(
+                {"ok": False, "error": "凭据写入失败，请检查 data 目录权限"}, 500)
+        with self._lock:
+            now = time.time()
+            for tok in [t for t, (_, exp) in self._tokens.items()
+                        if t != token and exp > now]:
+                self._tokens.pop(tok, None)
+        log.info("控制台密码已修改（用户 %s），其他会话已作废", user)
+        return handler.send_json({"ok": True})
 
     def start(self) -> http.server.ThreadingHTTPServer | None:
         if self.port <= 0:
             log.info("Web 控制台已关闭（PORT=0）")
             return None
-        if not self._password:
-            log.warning("未设置 ADMIN_PASSWORD —— Web 控制台不启动。"
-                        "需要它就在 compose 的 environment 里设 "
-                        "ADMIN_USERNAME 与 ADMIN_PASSWORD")
-            return None
+        if not self.setup_done():
+            log.info("首次启动：还没有管理员。浏览器打开控制台即可创建"
+                     "（创建入口只在这一刻开放，之后永久关闭）")
+        else:
+            log.info("Web 控制台已就绪（管理员 %s）", self.auth.username())
 
         ui = self
 
@@ -497,7 +568,12 @@ def _version() -> str:
 
 
 def webui_from_env(node, **overrides) -> WebUI:
-    """按环境变量装配控制台。"""
+    """按环境变量装配控制台。
+
+    登录凭据**不走环境变量**（历史上曾用 ADMIN_USERNAME / ADMIN_PASSWORD，
+    已废弃）：管理员在首次打开网页时创建，落在 auth.json。
+    文件位置可用 AUTH_FILE 覆盖，默认与 SETTINGS_FILE 同目录（都在卷里）。
+    """
     def env(name, default=""):
         v = os.environ.get(name)
         return default if v in (None, "") else v
@@ -509,12 +585,10 @@ def webui_from_env(node, **overrides) -> WebUI:
             log.warning("%s 不是整数，回退到 %s", name, default)
             return default
 
-    from .config import _env_secret  # 复用同一套「值或 _FILE」逻辑
     host = overrides.get("host") or env("WEB_HOST", "0.0.0.0")
     port = overrides.get("port") or env_int("PORT", 6600)
-    user = overrides.get("user") or env("ADMIN_USERNAME", "admin")
-    password = overrides.get("password")
-    if password is None:
-        password = _env_secret("ADMIN_PASSWORD")
+    settings_file = env("SETTINGS_FILE", "/data/settings.json")
+    auth_file = (overrides.get("auth_file") or env("AUTH_FILE")
+                 or os.path.join(os.path.dirname(settings_file), "auth.json"))
     ttl = env_int("WEB_SESSION_TTL", 12 * 3600)
-    return WebUI(node, host, port, user, password, ttl)
+    return WebUI(node, host, port, auth_file, ttl)

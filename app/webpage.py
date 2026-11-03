@@ -553,21 +553,109 @@ html[data-theme="light"] .tpick-mask{background:rgba(30,34,56,.34)}
 .toast .i{margin-top:1px;width:14px;height:14px;color:var(--run-text)}
 .toast b{display:block;font-weight:600}
 .toast span{font-size:11.5px;color:var(--text-5)}
-/* ===== 登录门 / 补充组件（生产版新增，原型里没有） ===== */
-.gate{position:fixed;inset:0;z-index:80;display:flex;align-items:center;
-  justify-content:center;background:var(--ink-950);padding:20px}
-.gatebox{display:flex;flex-direction:column;gap:10px;width:100%;max-width:330px;
-  border:1px solid var(--line-2);border-radius:16px;background:var(--ink-850);
-  padding:22px;box-shadow:var(--shadow-modal)}
-.lgmark{display:grid;place-items:center;width:44px;height:44px;border-radius:13px;
-  flex:none;background:var(--accent);color:var(--accent-ink)}
-.lghead{display:flex;align-items:center;gap:12px;margin-bottom:2px}
-.lgt{display:flex;flex-direction:column;gap:2px}
-.gatebox b{font-size:16px}
-.gsub{font-size:12px;color:var(--text-4)}
-.gerr{min-height:16px;font-size:12px;color:var(--err-text)}
-.gatebox .efld{display:flex;flex-direction:column}
-.gatebox .efld > span{margin-bottom:5px;font-size:11.5px;color:var(--text-4)}
+/* ===== 登录门 / 首次初始化（分屏布局） =====
+   左：品牌面板（渐变固定色，不随主题变 —— MailNest 同款）；
+   右：表单（用主题令牌，深浅色都对）。窄屏时品牌面板收成顶部窄条。 */
+.auth{position:fixed;inset:0;z-index:80;display:grid;
+  grid-template-columns:minmax(0,44%) minmax(0,1fr);background:var(--ink-950)}
+.auth[hidden]{display:none}
+.abrand{position:relative;overflow:hidden;display:flex;flex-direction:column;
+  padding:34px 38px 26px;color:#fff;
+  background:radial-gradient(120% 90% at 8% 0%, #5a58c9 0%, transparent 62%),
+    radial-gradient(90% 70% at 100% 100%, #2b2a72 0%, transparent 58%),
+    linear-gradient(160deg, #191860 0%, #403eb0 62%, #2b2a72 100%)}
+.abrand::before{content:"";position:absolute;inset:0;opacity:.16;pointer-events:none;
+  background-image:linear-gradient(to right, rgba(255,255,255,.35) 1px, transparent 1px),
+    linear-gradient(to bottom, rgba(255,255,255,.35) 1px, transparent 1px);
+  background-size:44px 44px;
+  -webkit-mask-image:radial-gradient(80% 70% at 30% 20%, #000 0%, transparent 78%);
+  mask-image:radial-gradient(80% 70% at 30% 20%, #000 0%, transparent 78%)}
+.abrand > *{position:relative;z-index:1}
+.alogo{display:flex;align-items:center;gap:10px;margin-bottom:auto}
+.alogo .mark{display:grid;place-items:center;width:36px;height:36px;border-radius:10px;
+  flex:none;background:rgba(255,255,255,.14);border:1px solid rgba(255,255,255,.18)}
+.alogo b{font-size:15px;display:block}
+.alogo .tag{font-size:11px;color:rgba(255,255,255,.72)}
+.abrand h1{font-size:29px;line-height:1.34;font-weight:650;margin:26px 0 10px;letter-spacing:-.01em}
+.abrand h1 em{font-style:normal;
+  background:linear-gradient(100deg,#fff 10%, #cdd0ff 62%, #9ea3ff 100%);
+  -webkit-background-clip:text;background-clip:text;color:transparent}
+.abrand .lede{font-size:13px;color:rgba(255,255,255,.72);margin:0 0 22px;max-width:30em}
+.afeats{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:13px}
+.afeats li{display:flex;gap:11px;align-items:flex-start;font-size:12.5px;
+  color:rgba(255,255,255,.72)}
+.afeats .fi{width:24px;height:24px;border-radius:7px;flex:none;display:grid;place-items:center;
+  background:rgba(255,255,255,.12);border:1px solid rgba(255,255,255,.18)}
+.afeats .fi svg{width:13px;height:13px;stroke:#fff;fill:none;stroke-width:1.8;
+  stroke-linecap:round;stroke-linejoin:round}
+.afeats b{display:block;color:#fff;font-weight:600;font-size:12.5px;margin-bottom:1px}
+.apfoot{margin-top:auto;padding-top:26px;font-size:11px;color:rgba(255,255,255,.72);
+  display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.apfoot .dot{width:3px;height:3px;border-radius:50%;background:currentColor;opacity:.6}
+
+.aform{display:flex;flex-direction:column;overflow:auto}
+.abox{width:100%;max-width:356px;margin:auto;padding:32px 44px 24px}
+.aeyebrow{display:inline-flex;align-items:center;gap:7px;font-size:11px;font-weight:600;
+  letter-spacing:.06em;color:var(--accent-text);background:var(--soft-accent);
+  border:1px solid var(--line-accent-soft);padding:4px 10px;border-radius:999px;margin-bottom:14px}
+.aeyebrow .dot{width:5px;height:5px;border-radius:50%;background:currentColor}
+.abox h2{font-size:22px;font-weight:650;margin:0 0 7px;letter-spacing:-.01em}
+.abox .asub{font-size:12.5px;color:var(--text-3);margin:0 0 20px}
+.aerr{display:flex;gap:8px;align-items:flex-start;padding:9px 12px;border-radius:10px;
+  font-size:12px;margin-bottom:14px;line-height:1.5;color:var(--err-text);
+  background:var(--soft-err);border:1px solid var(--line-err)}
+.aerr svg{width:14px;height:14px;flex:none;margin-top:2px;stroke:currentColor;fill:none;
+  stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}
+.aerr[hidden]{display:none}
+.abox .efld{margin-bottom:13px}
+.abox .wrap{position:relative;display:flex;align-items:center}
+.abox .lead{position:absolute;left:11px;display:grid;place-items:center;pointer-events:none;
+  color:var(--text-4)}
+.abox .lead svg{width:15px;height:15px;stroke:currentColor;fill:none;stroke-width:1.7;
+  stroke-linecap:round;stroke-linejoin:round}
+.abox input.inp{width:100%;font-size:13.5px;color:var(--text-1);background:var(--ink-800);
+  border:1px solid var(--line-3);border-radius:10px;padding:10px 12px 10px 34px;outline:none;
+  transition:border-color .14s, box-shadow .14s}
+.abox input.inp:focus{border-color:var(--accent);box-shadow:0 0 0 3px var(--accent-ring)}
+.abox .wrap.has-eye input{padding-right:40px}
+.aeye{position:absolute;right:6px;width:28px;height:28px;display:grid;place-items:center;
+  border:0;background:transparent;color:var(--text-4);cursor:pointer;border-radius:7px}
+.aeye:hover{background:var(--ink-800);color:var(--text-2)}
+.aeye svg{width:15px;height:15px;stroke:currentColor;fill:none;stroke-width:1.7;
+  stroke-linecap:round;stroke-linejoin:round}
+.ahint{font-size:11.5px;color:var(--text-4);margin:6px 0 0}
+.ahint[data-bad="true"]{color:var(--err-text)}
+.ahint[data-ok="true"]{color:var(--run-text)}
+.astrength{display:flex;gap:4px;margin-top:7px}
+.astrength i{height:3px;flex:1;border-radius:2px;background:var(--track);transition:background .18s}
+.astrength[data-lv="1"] i:nth-child(1){background:var(--err)}
+.astrength[data-lv="2"] i:nth-child(-n+2){background:var(--warn)}
+.astrength[data-lv="3"] i:nth-child(-n+3),
+.astrength[data-lv="4"] i{background:var(--run)}
+.astrength[hidden]{display:none}
+.abtn{width:100%;display:flex;align-items:center;justify-content:center;gap:8px;
+  font-size:13.5px;font-weight:600;color:var(--accent-ink);background:var(--accent);
+  border:1px solid var(--accent);border-radius:10px;padding:11px 14px;margin-top:16px;
+  cursor:pointer;transition:background .14s, transform .06s}
+.abtn:hover{background:var(--accent-hover);border-color:var(--accent-hover)}
+.abtn:active{transform:translateY(1px)}
+.abtn svg{width:15px;height:15px;stroke:currentColor;fill:none;stroke-width:2;
+  stroke-linecap:round;stroke-linejoin:round}
+.abtn[disabled]{opacity:.6;cursor:default}
+.aswitch{margin:15px 0 0;font-size:12.5px;color:var(--text-4);text-align:center}
+.aswitch a{color:var(--accent-text);text-decoration:none;cursor:pointer;font-weight:600}
+.aswitch a:hover{text-decoration:underline}
+.afoot{margin-top:auto;padding:18px 44px 20px;font-size:11px;color:var(--text-5);
+  display:flex;align-items:center;gap:7px;flex-wrap:wrap}
+.afoot .dot{width:3px;height:3px;border-radius:50%;background:currentColor;opacity:.55}
+@media (max-width:860px){
+  .auth{grid-template-columns:1fr;grid-template-rows:auto 1fr}
+  .abrand{padding:16px 20px}
+  .abrand h1{font-size:17px;margin:10px 0 0}
+  .abrand .lede,.afeats,.apfoot{display:none}
+  .abox{padding:22px 20px;max-width:none}
+  .afoot{padding:12px 20px 16px}
+}
 
 /* 星期多选 / 唤醒设备多选（复选框列表，用户指定样式） */
 .wdays{display:flex;gap:6px}
@@ -987,22 +1075,79 @@ html[data-theme="light"] .tpick-mask{background:rgba(30,34,56,.34)}
 </symbol>
 </defs></svg>
 
-<div class="gate hide" id="gate">
-  <form class="gatebox" id="lgForm" autocomplete="on">
-    <div class="lghead">
-      <div class="lgmark"><svg viewBox="0 0 32 32" style="width:26px;height:26px"><use href="#i-mark"/></svg></div>
-      <div class="lgt"><b>HiRouterCenter</b><span class="gsub">登录网络控制台</span></div>
+<div class="auth" id="auth" hidden>
+  <aside class="abrand">
+    <div class="alogo">
+      <span class="mark"><svg viewBox="0 0 32 32" style="width:22px;height:22px"><use href="#i-mark"/></svg></span>
+      <div><b>HiRouterCenter</b><span class="tag">华为路由器控制台</span></div>
     </div>
-    <label class="efld"><span>用户名</span>
-      <input class="inp" id="lgUser" name="username" placeholder="admin" autocomplete="username"></label>
-    <label class="efld"><span>密码</span>
-      <input class="inp" id="lgPass" name="password" type="password"
-        autocomplete="current-password" placeholder="控制台密码"></label>
-    <label class="ckrow"><input type="checkbox" id="lgRemember">
-      <span>保持登录（7 天）</span></label>
-    <button class="btn btn-primary" id="lgBtn" type="submit">登录</button>
-    <div class="gerr" id="lgErr"></div>
-  </form>
+    <h1>路由器、白名单、<br><em>一个控制台管完</em></h1>
+    <p class="lede">把 IPv6 防火墙白名单交给它自动跟进，设备在线情况与出口速率一屏看清。</p>
+    <ul class="afeats">
+      <li><span class="fi"><svg viewBox="0 0 24 24"><path d="M12 3l7 3v5.5c0 4.3-2.9 7.6-7 9-4.1-1.4-7-4.7-7-9V6l7-3Z"/><path d="m9 12 2 2 4-4"/></svg></span>
+        <div><b>白名单自动同步</b>公网地址变了，防火墙规则跟着变，不用手动改</div></li>
+      <li><span class="fi"><svg viewBox="0 0 24 24"><path d="M3 8.5h13a3 3 0 0 1 3 3v3a3 3 0 0 1-3 3H3"/><circle cx="6.5" cy="13" r="1.2" fill="#fff" stroke="none"/><circle cx="11" cy="13" r="1.2" fill="#fff" stroke="none" opacity=".5"/><path d="M19 9V6M22 11V8"/></svg></span>
+        <div><b>设备与速率一屏看清</b>在线状态、实时上下行、出口速率都在首页</div></li>
+      <li><span class="fi"><svg viewBox="0 0 24 24"><rect x="4" y="10" width="16" height="10" rx="2.5"/><path d="M8 10V7.5a4 4 0 0 1 8 0V10"/><circle cx="12" cy="15" r="1.3" fill="#fff" stroke="none"/></svg></span>
+        <div><b>只存在你的机器上</b>配置和凭据都写在本地容器里，不出内网</div></li>
+    </ul>
+    <div class="apfoot"><span>© 2026 HiRouterCenter</span><span class="dot"></span>
+      <span>自托管 · MIT</span></div>
+  </aside>
+
+  <main class="aform">
+    <div class="abox">
+      <span class="aeyebrow" id="auEyebrow"><span class="dot"></span>首次启动</span>
+      <h2 id="auTtl">创建管理员账户</h2>
+      <p class="asub" id="auSub">这台设备还没有管理员，先创建一个再继续</p>
+      <div class="aerr" id="auErr" hidden>
+        <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 7.5v5.5M12 16.4v.2"/></svg>
+        <span id="auErrTxt"></span>
+      </div>
+      <form id="auForm" autocomplete="on" novalidate>
+        <label class="efld"><span>用户名</span>
+          <div class="wrap">
+            <span class="lead"><svg viewBox="0 0 24 24"><circle cx="12" cy="8.5" r="3.4"/><path d="M5 19.5c1.3-3.2 4-4.8 7-4.8s5.7 1.6 7 4.8"/></svg></span>
+            <input class="inp" id="auUser" name="username" placeholder="给管理员起个名字"
+                   autocomplete="username" spellcheck="false" value="admin"></div>
+        </label>
+        <label class="efld"><span>密码</span>
+          <div class="wrap has-eye">
+            <span class="lead"><svg viewBox="0 0 24 24"><rect x="4.5" y="10" width="15" height="10" rx="2.4"/><path d="M8 10V7.6a4 4 0 0 1 8 0V10"/></svg></span>
+            <input class="inp" id="auPass" name="password" type="password"
+                   placeholder="至少 10 位" autocomplete="new-password">
+            <button class="aeye" type="button" id="auEye" aria-label="显示密码">
+              <svg viewBox="0 0 24 24"><path d="M2.5 12S6 5.8 12 5.8 21.5 12 21.5 12 18 18.2 12 18.2 2.5 12 2.5 12Z"/><circle cx="12" cy="12" r="2.7"/></svg>
+            </button>
+          </div>
+          <div class="astrength" id="auStr" data-lv="0" hidden><i></i><i></i><i></i><i></i></div>
+          <p class="ahint" id="auPassHint" hidden></p>
+        </label>
+        <label class="efld" id="auF2" hidden><span>确认密码</span>
+          <div class="wrap has-eye">
+            <span class="lead"><svg viewBox="0 0 24 24"><rect x="4.5" y="10" width="15" height="10" rx="2.4"/><path d="M8 10V7.6a4 4 0 0 1 8 0V10"/></svg></span>
+            <input class="inp" id="auPass2" name="password2" type="password"
+                   placeholder="再输一次" autocomplete="new-password">
+            <button class="aeye" type="button" id="auEye2" aria-label="显示确认密码">
+              <svg viewBox="0 0 24 24"><path d="M2.5 12S6 5.8 12 5.8 21.5 12 21.5 12 18 18.2 12 18.2 2.5 12 2.5 12Z"/><circle cx="12" cy="12" r="2.7"/></svg>
+            </button>
+          </div>
+          <p class="ahint" id="auP2Hint" hidden></p>
+        </label>
+        <label class="ckrow" id="auRememberRow" hidden><input type="checkbox" id="auRemember" checked>
+          <span>保持登录（7 天）</span></label>
+        <button class="abtn" id="auBtn" type="submit">
+          <span id="auBtnTxt">创建账户</span>
+          <svg viewBox="0 0 24 24"><path d="M5 12h13M13 6.5 18.5 12 13 17.5"/></svg>
+        </button>
+      </form>
+      <p class="aswitch" id="auSwitch" hidden>已有管理员账号？<a id="auToLogin">去登录</a></p>
+    </div>
+    <div class="afoot">
+      <span id="auVer">HiRouterCenter</span><span class="dot"></span>
+      <span>本地部署</span><span class="dot"></span><span>数据不出内网</span>
+    </div>
+  </main>
 </div>
 
 <div class="shell">
@@ -1507,7 +1652,7 @@ async function api(path, body) {
   const opt = body === undefined ? {} :
     { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) };
   const r = await fetch(path, opt);
-  if (r.status === 401) { showGate(); throw new Error('未登录'); }
+  if (r.status === 401) { showAuth('login'); throw new Error('未登录'); }
   let j = null;
   try { j = await r.json(); } catch (e) { j = { ok: false, error: '返回内容无法解析' }; }
   return j;
@@ -1526,53 +1671,143 @@ const S = {
   devNode: 'all', showNodes: false,
   page: 'devices', nTab: 'channels',
   loaded: {},          // 每页最后一次拉数据的时间，用来做缓存
+  authMode: 'login',   // 认证页模式：'setup' | 'login'，由 showAuth() 设置
 };
 
-/* ---------------- 登录 ---------------- */
-function showGate() {
+/* ---------------- 登录 / 首次初始化 ----------------
+   模式由服务端驱动：/api/session 里 setupDone=false → 创建管理员；
+   否则 → 登录。两种模式共用同一个分屏界面，字段按模式增减。 */
+
+function showAuth(mode) {
   S.authed = false;
-  $('#gate').classList.remove('hide');
-  setTimeout(() => { const p = $('#lgPass'); if (p) p.focus(); }, 60);
+  S.authMode = mode;
+  const setup = mode === 'setup';
+  $('#auth').hidden = false;
+  $('#auEyebrow').innerHTML = setup ? '<span class="dot"></span>首次启动' : '<span class="dot"></span>安全登录';
+  $('#auTtl').textContent = setup ? '创建管理员账户' : '登录控制台';
+  $('#auSub').textContent = setup ? '这台设备还没有管理员，先创建一个再继续'
+    : '用管理员账号继续，配置都保存在这台机器上';
+  $('#auF2').hidden = !setup;
+  $('#auRememberRow').hidden = setup;
+  $('#auBtnTxt').textContent = setup ? '创建账户' : '登录';
+  $('#auSwitch').hidden = !setup;      // 已初始化后服务端拒绝创建，不给假入口
+  $('#auPass').placeholder = setup ? '至少 10 位' : '请输入密码';
+  $('#auPass').autocomplete = setup ? 'new-password' : 'current-password';
+  $('#auStr').hidden = !setup;
+  /* 每次进来都从干净状态开始 */
+  hideAuErr();
+  $('#auPass').value = ''; $('#auPass2').value = '';
+  syncStrength();
+  setTimeout(() => { const p = setup ? $('#auUser') : $('#auPass'); if (p) p.focus(); }, 60);
 }
-function hideGate() { $('#gate').classList.add('hide'); }
+function hideAuth() { $('#auth').hidden = true; }
+function showAuErr(msg) {
+  $('#auErrTxt').textContent = msg;
+  $('#auErr').hidden = false;
+}
+function hideAuErr() { $('#auErr').hidden = true; }
+
+/* 密码强度（仅创建模式）：长度 + 字符种类，提示性质，不拦提交 —— 后端有硬校验 */
+function pwLevel(pw) {
+  if (!pw) return 0;
+  let kinds = 0;
+  if (/[a-z]/.test(pw)) kinds++;
+  if (/[A-Z]/.test(pw)) kinds++;
+  if (/\d/.test(pw)) kinds++;
+  if (/[^\w]/.test(pw)) kinds++;
+  if (pw.length < 10) return 1;
+  if (pw.length >= 14 && kinds >= 3) return 4;
+  if (kinds >= 3) return 3;
+  if (kinds >= 2) return 2;
+  return 1;
+}
+function syncStrength() {
+  const setup = S.authMode === 'setup';
+  const pw = $('#auPass').value;
+  const hint = $('#auPassHint');
+  if (setup) {
+    $('#auStr').dataset.lv = String(pwLevel(pw));
+    if (!pw) {
+      hint.dataset.bad = 'false'; hint.dataset.ok = 'false';
+      hint.textContent = '这个账号能控制防火墙与设备，请勿与其他网站共用密码。';
+      hint.hidden = false;
+    } else if (pw.length < 10) {
+      hint.dataset.bad = 'true'; hint.dataset.ok = 'false';
+      hint.textContent = '还差 ' + (10 - pw.length) + ' 位，至少 10 位';
+    } else {
+      hint.dataset.bad = 'false'; hint.dataset.ok = 'true';
+      hint.textContent = '长度够了';
+    }
+    const p2 = $('#auP2Hint');
+    p2.hidden = !($('#auPass2').value && $('#auPass2').value !== pw);
+    if (!p2.hidden) { p2.dataset.bad = 'true'; p2.textContent = '两次输入的密码不一致'; }
+  } else {
+    hint.hidden = true;
+  }
+}
+$('#auPass').addEventListener('input', syncStrength);
+$('#auPass2').addEventListener('input', syncStrength);
+
+/* 显隐密码 */
+function bindEye(btn, input) {
+  btn.addEventListener('click', () => {
+    const show = input.type === 'password';
+    input.type = show ? 'text' : 'password';
+    btn.setAttribute('aria-label', show ? '隐藏密码' : '显示密码');
+  });
+}
+bindEye($('#auEye'), $('#auPass'));
+bindEye($('#auEye2'), $('#auPass2'));
+$('#auToLogin').addEventListener('click', () => showAuth('login'));
 
 try { localStorage.removeItem('ipv6sync-remember'); } catch (e) { }
-$('#lgForm').addEventListener('submit', async e => {
+$('#auForm').addEventListener('submit', async e => {
   e.preventDefault();
-  const btn = $('#lgBtn'), err = $('#lgErr');
-  err.textContent = '';
+  hideAuErr();
+  const setup = S.authMode === 'setup';
+  const btn = $('#auBtn'), txt = $('#auBtnTxt');
+  const user = $('#auUser').value, pass = $('#auPass').value;
+  if (setup && pass !== $('#auPass2').value) {
+    showAuErr('两次输入的密码不一致');
+    return;
+  }
   btn.disabled = true;
+  txt.innerHTML = '<span class="spin" style="border-top-color:var(--accent-ink);border-color:color-mix(in srgb,var(--accent-ink) 30%,transparent)"></span>';
   try {
-    const r = await fetch('/api/login', {
+    const r = await fetch(setup ? '/api/setup' : '/api/login', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        user: $('#lgUser').value,
-        password: $('#lgPass').value,
+      body: JSON.stringify(setup ? {
+        user,
+        password: pass,
+        password2: $('#auPass2').value,
+      } : {
+        user,
+        password: pass,
         // 勾了「保持登录（7 天）」由后端签发 7 天有效期的 HttpOnly Cookie；
         // 浏览器本地不保存任何密码明文（顺手清掉旧版本遗留的明文记录）
-        remember: !!$('#lgRemember').checked,
+        remember: !!$('#auRemember').checked,
       }),
     });
     const j = await r.json().catch(() => ({}));
     if (r.ok && j.ok) {
-      hideGate();
-      $('#lgPass').value = '';
+      hideAuth();
+      $('#auPass').value = '';
       S.authed = true;
       await boot();
       startPolling();          // 登录进来的也要开 5 秒轮询（原来只在启动已登录那条路开）
     } else {
-      err.textContent = j.error || '登录失败';
+      showAuErr(j.error || (setup ? '创建失败' : '登录失败'));
     }
   } catch (e) {
-    err.textContent = '连不上服务，请稍后再试';
-  } finally { btn.disabled = false; }
+    showAuErr('连不上服务，请稍后再试');
+  } finally { btn.disabled = false; txt.textContent = setup ? '创建账户' : '登录'; }
 });
 $('#btnLogout').addEventListener('click', async () => {
   try { await api('/api/logout', {}); } catch (e) { /* 已掉线也算退出 */ }
   S.authed = false;
   stopPolling();
-  showGate();
+  showAuth('login');
 });
 
 /* ---------------- 设备类型 ---------------- */
@@ -3847,7 +4082,11 @@ async function refreshState() {
 /* 启动 */
 async function boot() {
   const v = await api('/api/version').catch(() => null);
-  if (v) S.version = v.version || '';
+  if (v) {
+    S.version = v.version || '';
+    const ver = $('#auVer');               // 认证页页脚也带上版本号
+    if (ver && S.version) ver.textContent = 'HiRouterCenter ' + S.version;
+  }
   await refreshState();
   await Promise.all([
     loadTasks(),
@@ -3863,11 +4102,14 @@ async function boot() {
     const s = await (await fetch('/api/session')).json();
     if (s && s.authed) {
       S.authed = true;
-      hideGate();
       await boot();
       startPolling();
-    } else showGate();
-  } catch (e) { showGate(); }
+    } else {
+      /* 模式由服务端定：还没创建管理员 → 创建页；否则 → 登录页。
+         理论上不该出现「已初始化还开创建页」—— 服务端 403 兜底。 */
+      showAuth(s && s.setupDone === false ? 'setup' : 'login');
+    }
+  } catch (e) { showAuth('login'); }
 })();
 </script>
 </body>

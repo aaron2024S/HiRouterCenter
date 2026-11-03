@@ -31,7 +31,7 @@ ENV_KEYS = ("ROUTER_HOST", "ROUTER_USER", "ROUTER_PASSWORD", "ROUTER_PASSWORD_FI
             "SETTINGS_FILE", "STATE_FILE", "SESSION_FILE", "TARGET_MAC",
             "POLL_INTERVAL",
             "ENTRY_NAME", "PORT", "DRY_RUN", "VERIFY_AFTER_WRITE",
-            "ADMIN_USERNAME", "ADMIN_PASSWORD", "ADMIN_PASSWORD_FILE",
+            "AUTH_FILE",
             "HEALTH_PORT", "HEALTH_HOST")
 
 
@@ -566,30 +566,39 @@ class LoginBackoffTest(EnvSandbox):
         self.assertIsNone(node.syncer._fw_seen, "_fw_seen 是变更检测基准，不许动")
 
 
-class ConsoleCredentialsTest(EnvSandbox):
-    """控制台登录账号来自 compose 的 environment（ADMIN_USERNAME / ADMIN_PASSWORD）。"""
+class ConsoleAuthTest(EnvSandbox):
+    """控制台登录凭据 = data/auth.json（网页首次创建），环境变量已废弃。"""
 
-    def test_login_credentials_from_admin_env(self):
-        os.environ["ADMIN_USERNAME"] = "boss"
-        os.environ["ADMIN_PASSWORD"] = "s3cret-pw"
+    def test_auth_file_derived_from_settings_dir(self):
+        os.environ["SETTINGS_FILE"] = os.path.join(self.tmp.name, "settings.json")
         ui = webui_from_env(FakeNode(), host="127.0.0.1", port=free_port())
-        self.assertEqual(ui.user, "boss")
-        self.assertTrue(ui.enabled())
-        self.assertTrue(ui._check_credentials("boss", "s3cret-pw"))
+        self.assertEqual(os.path.dirname(ui.auth.path),
+                         os.path.dirname(os.environ["SETTINGS_FILE"]))
+        self.assertFalse(ui.setup_done())
+
+    def test_auth_file_env_override(self):
+        os.environ["AUTH_FILE"] = os.path.join(self.tmp.name, "auth.json")
+        ui = webui_from_env(FakeNode(), host="127.0.0.1", port=free_port())
+        self.assertEqual(ui.auth.path, os.environ["AUTH_FILE"])
+
+    def test_created_credentials_verify(self):
+        os.environ["AUTH_FILE"] = os.path.join(self.tmp.name, "auth.json")
+        ui = webui_from_env(FakeNode(), host="127.0.0.1", port=free_port())
+        ui.auth.create("boss", "s3cret-pw-123")
+        self.assertTrue(ui.setup_done())
+        self.assertEqual(ui.auth.username(), "boss")
+        self.assertTrue(ui._check_credentials("boss", "s3cret-pw-123"))
         self.assertFalse(ui._check_credentials("boss", "wrong"))
-        self.assertFalse(ui._check_credentials("admin", "s3cret-pw"))
+        self.assertFalse(ui._check_credentials("admin", "s3cret-pw-123"))
 
-    def test_password_file(self):
-        secret = os.path.join(self.tmp.name, "web_pw.txt")
-        with open(secret, "w", encoding="utf-8") as f:
-            f.write("pw-from-file\n")       # 结尾换行必须被去掉
-        os.environ["ADMIN_PASSWORD_FILE"] = secret
+    def test_env_passwords_are_ignored(self):
+        """环境变量里就算还留着 ADMIN_PASSWORD 也绝不生效（已废弃，防止假安全）。"""
+        os.environ["ADMIN_USERNAME"] = "legacy"
+        os.environ["ADMIN_PASSWORD"] = "legacy-pw"
+        os.environ["AUTH_FILE"] = os.path.join(self.tmp.name, "auth.json")
         ui = webui_from_env(FakeNode(), host="127.0.0.1", port=free_port())
-        self.assertTrue(ui._check_credentials("admin", "pw-from-file"))
-
-    def test_no_admin_password_disables_console(self):
-        ui = webui_from_env(FakeNode(), host="127.0.0.1", port=free_port())
-        self.assertFalse(ui.enabled())
+        self.assertFalse(ui.setup_done())
+        self.assertFalse(ui._check_credentials("legacy", "legacy-pw"))
 
 
 class HealthServerScopeTest(EnvSandbox):
@@ -679,8 +688,10 @@ class WebUITest(unittest.TestCase):
     def setUp(self):
         self.node = FakeNode()
         self.port = free_port()
-        self.ui = WebUI(self.node, "127.0.0.1", self.port, "admin", "web-secret",
+        self.auth_file = os.path.join(tempfile.mkdtemp(), "auth.json")
+        self.ui = WebUI(self.node, "127.0.0.1", self.port, self.auth_file,
                         session_ttl=3600)
+        self.ui.auth.create("admin", "web-secret-pw")
         self.srv = self.ui.start()
         self.assertIsNotNone(self.srv, "控制台没起来")
         self.base = f"http://127.0.0.1:{self.port}"
@@ -728,13 +739,13 @@ class WebUITest(unittest.TestCase):
 
     def test_wrong_username_rejected(self):
         code, _, _ = call(self.base, "/api/login", "POST",
-                          {"user": "root", "password": "web-secret"})
+                          {"user": "root", "password": "web-secret-pw"})
         self.assertEqual(code, 401)
 
     # ---- 登录后的完整流程 ----
     def login(self) -> str:
         code, j, hdr = call(self.base, "/api/login", "POST",
-                            {"user": "admin", "password": "web-secret"})
+                            {"user": "admin", "password": "web-secret-pw"})
         self.assertEqual(code, 200, j)
         cookie = hdr.get("Set-Cookie", "")
         self.assertIn("HttpOnly", cookie)
@@ -750,7 +761,7 @@ class WebUITest(unittest.TestCase):
         self.assertEqual(j["user"], "admin")
         self.assertTrue(j["settings"])
         # 密码绝不能出现在返回里
-        self.assertNotIn("web-secret", json.dumps(j, ensure_ascii=False))
+        self.assertNotIn("web-secret-pw", json.dumps(j, ensure_ascii=False))
         blob = json.dumps(j, ensure_ascii=False)
         self.assertIn('"is_set": true', blob)
 
@@ -931,7 +942,9 @@ class WebUITest(unittest.TestCase):
 class WebUILoginThrottleTest(unittest.TestCase):
     def setUp(self):
         self.port = free_port()
-        self.ui = WebUI(FakeNode(), "127.0.0.1", self.port, "admin", "web-secret")
+        self.ui = WebUI(FakeNode(), "127.0.0.1", self.port,
+                        os.path.join(tempfile.mkdtemp(), "auth.json"))
+        self.ui.auth.create("admin", "web-secret-pw")
         self.ui.start()
         self.base = f"http://127.0.0.1:{self.port}"
 
@@ -947,7 +960,7 @@ class WebUILoginThrottleTest(unittest.TestCase):
         self.assertIn(429, codes, f"连续失败应触发限速，实际 {codes}")
         # 被限速后即使密码对也不行，防止"边爆破边撞对"
         code, j, _ = call(self.base, "/api/login", "POST",
-                          {"user": "admin", "password": "web-secret"})
+                          {"user": "admin", "password": "web-secret-pw"})
         self.assertEqual(code, 429)
         self.assertIn("秒后再试", j["error"])
 
@@ -956,7 +969,7 @@ class WebUILoginThrottleTest(unittest.TestCase):
             call(self.base, "/api/login", "POST",
                  {"user": "admin", "password": "wrong"})
         code, _, _ = call(self.base, "/api/login", "POST",
-                          {"user": "admin", "password": "web-secret"})
+                          {"user": "admin", "password": "web-secret-pw"})
         self.assertEqual(code, 200)
         self.assertEqual(self.ui._throttled("127.0.0.1"), 0.0)
 
@@ -1010,18 +1023,26 @@ class WebUILoginThrottleTest(unittest.TestCase):
 
 
 class WebUIDisabledTest(unittest.TestCase):
-    def test_no_password_means_no_server(self):
-        ui = WebUI(FakeNode(), "127.0.0.1", free_port(), "admin", "")
-        self.assertFalse(ui.enabled())
-        self.assertIsNone(ui.start())        # 没口令就不开端口，而不是开个裸的
+    """控制台开关只剩一个维度：PORT。没有管理员 ≠ 不启动 —— 那时要开放创建入口。"""
 
     def test_port_zero_means_disabled(self):
-        ui = WebUI(FakeNode(), "127.0.0.1", 0, "admin", "x")
+        ui = WebUI(FakeNode(), "127.0.0.1", 0,
+                   os.path.join(tempfile.mkdtemp(), "auth.json"))
         self.assertFalse(ui.enabled())
         self.assertIsNone(ui.start())
 
+    def test_no_admin_still_starts_and_opens_setup(self):
+        auth_file = os.path.join(tempfile.mkdtemp(), "auth.json")
+        ui = WebUI(FakeNode(), "127.0.0.1", free_port(), auth_file)
+        self.assertTrue(ui.enabled(), "没创建管理员也要能开端口（否则永远进不了创建页）")
+        self.assertFalse(ui.setup_done())
+        srv = ui.start()
+        self.assertIsNotNone(srv)
+        ui.stop()
+
     def test_expired_token_rejected(self):
-        ui = WebUI(FakeNode(), "127.0.0.1", free_port(), "admin", "x", session_ttl=300)
+        ui = WebUI(FakeNode(), "127.0.0.1", free_port(),
+                   os.path.join(tempfile.mkdtemp(), "auth.json"), session_ttl=300)
         tok = ui._new_token("admin")
         self.assertEqual(ui._valid(tok), "admin")
         ui._tokens[tok] = ("admin", 1.0)     # 手动过期

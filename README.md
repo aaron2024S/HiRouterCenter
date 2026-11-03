@@ -24,12 +24,10 @@ NAS 上跑一个容器，**盯着自己（以及家里设备）的 IPv6 地址**
 ## 快速开始
 
 ```bash
-# 1. 在 docker-compose.yml 的 environment 里改控制台登录账号
-#      - ADMIN_USERNAME=admin
-#      - ADMIN_PASSWORD=你的口令
+# 1. docker compose build && docker compose up -d
 
-# 2. docker compose build && docker compose up -d
-#    浏览器打开 http://<本机IP>:6600/ 登录控制台
+# 2. 浏览器打开 http://<本机IP>:6600/ —— 首次打开会要求创建管理员账户
+#    （创建入口只在这一刻开放，之后永久关闭）
 
 # 3. 在网页「路由器连接」里填 路由器地址 / 管理员密码，保存即开始同步
 #    其余设置（NAS 的 MAC、检测周期等）也全在网页里改，改完热生效
@@ -51,15 +49,22 @@ curl -s -o /dev/null -w '%{http_code}\n' localhost:8099/healthz   # 200 = 正常
 
 ---
 
-## 浏览器控制台（可选）
+## 浏览器控制台
 
-在 compose 的 `environment:` 里设了 `ADMIN_PASSWORD` 就自动开启；
-**不填则不监听这个端口**（安全默认）。
+控制台随容器启动（`PORT=0` 可关闭）。登录账号**不用环境变量设置**：
+首次打开网页时按提示创建管理员（落在 `data/auth.json`，只存 scrypt 哈希），
+创建入口只在这一刻开放，之后永久关闭。
 
 ```
-http://<NAS 的 IP>:6600/      用 ADMIN_USERNAME / ADMIN_PASSWORD 登录
+http://<NAS 的 IP>:6600/      首次 = 创建管理员；之后 = 登录
                               端口可用 compose 的 - PORT=xxxx 改，0 = 关闭
 ```
+
+忘记密码：删掉 `data/auth.json` 后重启容器，会重新进入「创建管理员」
+（需要宿主机上 data 目录的写权限 —— 等于用磁盘权限做一次重置）。
+
+从旧版本（用 `ADMIN_PASSWORD` 环境变量的 1.2.x）升级：直接删掉 compose 里的
+`ADMIN_USERNAME` / `ADMIN_PASSWORD` 两行并清空 `data/` 目录重建容器，按页面提示重新初始化。
 
 **首页（设备）** 顶部是路由器信息卡（型号 / 硬件版本 / 运行时长 / WAN IPv4·IPv6 / Wi-Fi 名称 / 在线设备 / IPv6 白条数 / 下次检测），右边四个快捷操作：重启、重新拨号、功率模式、信道优化。
 
@@ -200,10 +205,12 @@ PREVIEW_PORT=9000 PREVIEW_PASSWORD=xxx python preview_console.py
   —— 跨站表单发不出这个 Content-Type，配合 `SameSite=Lax` 挡掉 CSRF。
 - 会话令牌只存内存（重启即失效），Cookie 带 `HttpOnly` + `SameSite=Lax`，默认 12 小时过期；
   登录时勾选「保持登录(7天)」则按 7 天有效期签发（浏览器不保存密码明文）。
+  管理员凭据存 `data/auth.json`（scrypt 哈希，权限 0600），网页里可改密码，
+  改完其他会话立即作废。
 - **在网页里填的路由器密码会明文写进 `/data/settings.json`（权限 0600）**，
   和放在 `.env` 里是同一个安全等级。不想落盘明文就用 `ROUTER_PASSWORD_FILE` 指向的
   Docker secret；想彻底不落盘，就只提供会话文件（见下）。
-- 不在局域网里、或者不想开这个口子：`PORT=0` 或直接不设 `ADMIN_PASSWORD`。
+- 不在局域网里、或者不想开这个口子：`PORT=0`。
 
 ---
 
@@ -349,9 +356,7 @@ SLAAC 稳定地址、RFC 4941 隐私临时地址、DHCPv6 分配地址，前缀�
 | `HEALTH_HOST` | `127.0.0.1` | 健康检查监听地址；改成 `0.0.0.0` 才会对局域网开放 |
 | `LOG_LEVEL` / `LOG_JSON` | `INFO` / `false` | 日志级别 / JSON 日志 |
 | `SESSION_FILE` | `/data/session.json` | 会话缓存（**只存 Cookie 和 CSRF 令牌，不含密码**） |
-| `ADMIN_USERNAME` | `admin` | 控制台登录用户名（compose 的 environment） |
-| `ADMIN_PASSWORD` | — | 控制台登录密码；**不设就不启动控制台** |
-| `ADMIN_PASSWORD_FILE` | — | 从文件读控制台密码 |
+| `AUTH_FILE` | `<SETTINGS_FILE 目录>/auth.json` | 控制台管理员凭据（网页首次打开时创建；忘记密码删掉重启） |
 | `PORT` / `WEB_HOST` | `6600` / `0.0.0.0` | 控制台监听端口；`PORT=0` 关闭 |
 | `WEB_SESSION_TTL` | `43200` | 控制台登录有效期（秒） |
 | `SETTINGS_FILE` | `/data/settings.json` | 网页保存的设置（优先级高于环境变量） |

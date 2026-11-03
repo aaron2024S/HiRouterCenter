@@ -225,10 +225,6 @@ def main(argv=None):
         srv = start_health_server(node, cfg.health_port, cfg.health_host)
         webui = webui_from_env(node)
         webui.start()
-        if not webui.enabled():
-            log.info("提示：在 compose 的 environment 里设 ADMIN_USERNAME / "
-                     "ADMIN_PASSWORD 就能打开浏览器控制台"
-                     "（在网页里改设置，不必重建容器）")
 
     def _stop(signum, _frame):
         log.info("收到信号 %s，准备退出", signum)
