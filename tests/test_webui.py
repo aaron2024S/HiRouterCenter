@@ -691,7 +691,7 @@ class WebUITest(unittest.TestCase):
         self.auth_file = os.path.join(tempfile.mkdtemp(), "auth.json")
         self.ui = WebUI(self.node, "127.0.0.1", self.port, self.auth_file,
                         session_ttl=3600)
-        self.ui.auth.create("admin", "web-secret-pw")
+        self.ui.auth.create("admin", "web-Secret1!")
         self.srv = self.ui.start()
         self.assertIsNotNone(self.srv, "控制台没起来")
         self.base = f"http://127.0.0.1:{self.port}"
@@ -739,13 +739,13 @@ class WebUITest(unittest.TestCase):
 
     def test_wrong_username_rejected(self):
         code, _, _ = call(self.base, "/api/login", "POST",
-                          {"user": "root", "password": "web-secret-pw"})
+                          {"user": "root", "password": "web-Secret1!"})
         self.assertEqual(code, 401)
 
     # ---- 登录后的完整流程 ----
     def login(self) -> str:
         code, j, hdr = call(self.base, "/api/login", "POST",
-                            {"user": "admin", "password": "web-secret-pw"})
+                            {"user": "admin", "password": "web-Secret1!"})
         self.assertEqual(code, 200, j)
         cookie = hdr.get("Set-Cookie", "")
         self.assertIn("HttpOnly", cookie)
@@ -761,7 +761,7 @@ class WebUITest(unittest.TestCase):
         self.assertEqual(j["user"], "admin")
         self.assertTrue(j["settings"])
         # 密码绝不能出现在返回里
-        self.assertNotIn("web-secret-pw", json.dumps(j, ensure_ascii=False))
+        self.assertNotIn("web-Secret1!", json.dumps(j, ensure_ascii=False))
         blob = json.dumps(j, ensure_ascii=False)
         self.assertIn('"is_set": true', blob)
 
@@ -944,7 +944,7 @@ class WebUILoginThrottleTest(unittest.TestCase):
         self.port = free_port()
         self.ui = WebUI(FakeNode(), "127.0.0.1", self.port,
                         os.path.join(tempfile.mkdtemp(), "auth.json"))
-        self.ui.auth.create("admin", "web-secret-pw")
+        self.ui.auth.create("admin", "web-Secret1!")
         self.ui.start()
         self.base = f"http://127.0.0.1:{self.port}"
 
@@ -960,7 +960,7 @@ class WebUILoginThrottleTest(unittest.TestCase):
         self.assertIn(429, codes, f"连续失败应触发限速，实际 {codes}")
         # 被限速后即使密码对也不行，防止"边爆破边撞对"
         code, j, _ = call(self.base, "/api/login", "POST",
-                          {"user": "admin", "password": "web-secret-pw"})
+                          {"user": "admin", "password": "web-Secret1!"})
         self.assertEqual(code, 429)
         self.assertIn("秒后再试", j["error"])
 
@@ -969,7 +969,7 @@ class WebUILoginThrottleTest(unittest.TestCase):
             call(self.base, "/api/login", "POST",
                  {"user": "admin", "password": "wrong"})
         code, _, _ = call(self.base, "/api/login", "POST",
-                          {"user": "admin", "password": "web-secret-pw"})
+                          {"user": "admin", "password": "web-Secret1!"})
         self.assertEqual(code, 200)
         self.assertEqual(self.ui._throttled("127.0.0.1"), 0.0)
 

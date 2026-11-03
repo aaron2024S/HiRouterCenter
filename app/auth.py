@@ -25,10 +25,8 @@ import time
 
 ALGO = "scrypt"
 N, R, P, DKLEN = 2 ** 14, 8, 1, 32          # OWASP 推荐：n=2^14, r=8, p=1
-MIN_PASSWORD_LEN = 10
+MIN_PASSWORD_LEN = 8
 USERNAME_RE = re.compile(r"^[A-Za-z0-9_.\-]{2,32}$")
-
-SCRYPT_BLOCKS = 16384                        # 仅用于文件头自检说明，不参与运算
 
 
 class AuthError(ValueError):
@@ -43,8 +41,19 @@ def check_username(name: str) -> str:
 
 
 def check_password(pw: str) -> str:
-    if not pw or len(pw) < MIN_PASSWORD_LEN:
+    """密码策略：至少 8 位，且必须同时含字母、数字、特殊字符（三类缺一不可）。
+
+    长度放宽到 8 是因为种类要求补上了熵；特殊字符 = 非字母数字的可打印字符，
+    不限定具体集合（空格也算），避免「我这个符号算不算」的困惑。
+    """
+    pw = pw or ""
+    if len(pw) < MIN_PASSWORD_LEN:
         raise AuthError(f"密码至少 {MIN_PASSWORD_LEN} 位")
+    has_letter = re.search(r"[A-Za-z]", pw)
+    has_digit = re.search(r"\d", pw)
+    has_special = re.search(r"[^A-Za-z0-9]", pw)
+    if not (has_letter and has_digit and has_special):
+        raise AuthError("密码必须同时包含字母、数字和特殊字符")
     return pw
 
 

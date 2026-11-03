@@ -33,56 +33,71 @@ class AuthStoreTest(unittest.TestCase):
 
     def test_create_then_verify(self):
         self.assertFalse(self.store.exists())
-        self.store.create("boss", "correct-horse-battery")
+        self.store.create("boss", "Corr3ct-Horse!")
         self.assertTrue(self.store.exists())
         self.assertEqual(self.store.username(), "boss")
-        self.assertTrue(self.store.verify("boss", "correct-horse-battery"))
+        self.assertTrue(self.store.verify("boss", "Corr3ct-Horse!"))
         self.assertFalse(self.store.verify("boss", "wrong"))
-        self.assertFalse(self.store.verify("admin", "correct-horse-battery"),
+        self.assertFalse(self.store.verify("admin", "Corr3ct-Horse!"),
                          "用户名也要比对：换名字 + 对密码不算过")
 
     def test_create_only_once(self):
-        self.store.create("boss", "correct-horse-battery")
+        self.store.create("boss", "Corr3ct-Horse!")
         with self.assertRaises(AuthError):
-            self.store.create("again", "another-password-1")
+            self.store.create("again", "another-Pass1!")
         self.assertEqual(self.store.username(), "boss")
 
     def test_weak_password_rejected(self):
-        for pw in ("", "short", "123456789", "a" * 9):   # 9 位、纯数字都不行
+        # 长度不够：至少 8 位
+        for pw in ("", "short", "aB1!", "a" * 7):
+            with self.assertRaises(AuthError):
+                self.store.create("boss", pw)
+        # 长度够但种类不全：必须字母、数字、特殊字符三类齐全
+        for pw in ("abcdefgh",        # 只有字母
+                   "12345678",        # 只有数字
+                   "!@#$%^&*",        # 只有特殊字符
+                   "abcd1234",        # 缺特殊字符
+                   "abcd!@#$",        # 缺数字
+                   "1234!@#$"):       # 缺字母
             with self.assertRaises(AuthError):
                 self.store.create("boss", pw)
         self.assertFalse(self.store.exists(), "失败创建不能留下半截文件")
 
+    def test_password_kinds_boundary_ok(self):
+        # 恰好 8 位且三类齐全 = 合法
+        self.store.create("boss", "Ab1!Ab1!")
+        self.assertTrue(self.store.verify("boss", "Ab1!Ab1!"))
+
     def test_bad_username_rejected(self):
         for name in ("", "a", "带中文", "has space", "x" * 33):
             with self.assertRaises(AuthError):
-                self.store.create(name, "correct-horse-battery")
+                self.store.create(name, "Corr3ct-Horse!")
         self.assertFalse(self.store.exists())
 
     def test_no_plaintext_on_disk(self):
-        self.store.create("boss", "correct-horse-battery")
+        self.store.create("boss", "Corr3ct-Horse!")
         with open(self.store.path, encoding="utf-8") as f:
             blob = f.read()
-        self.assertNotIn("correct-horse-battery", blob)
+        self.assertNotIn("Corr3ct-Horse!", blob)
         rec = json.loads(blob)
         self.assertEqual(rec["password"]["algo"], "scrypt")
         self.assertNotEqual(rec["password"]["hash"],
-                            "correct-horse-battery")
+                            "Corr3ct-Horse!")
 
     def test_update_password_requires_old(self):
-        self.store.create("boss", "correct-horse-battery")
+        self.store.create("boss", "Corr3ct-Horse!")
         with self.assertRaises(AuthError):
-            self.store.update_password("wrong-old", "another-password-1")
-        self.store.update_password("correct-horse-battery", "another-password-1")
-        self.assertTrue(self.store.verify("boss", "another-password-1"))
-        self.assertFalse(self.store.verify("boss", "correct-horse-battery"))
+            self.store.update_password("wrong-old", "another-Pass1!")
+        self.store.update_password("Corr3ct-Horse!", "another-Pass1!")
+        self.assertTrue(self.store.verify("boss", "another-Pass1!"))
+        self.assertFalse(self.store.verify("boss", "Corr3ct-Horse!"))
 
     def test_corrupt_file_fails_closed(self):
-        self.store.create("boss", "correct-horse-battery")
+        self.store.create("boss", "Corr3ct-Horse!")
         with open(self.store.path, "w", encoding="utf-8") as f:
             f.write("{not json")
         self.assertIsNone(self.store.load())
-        self.assertFalse(self.store.verify("boss", "correct-horse-battery"),
+        self.assertFalse(self.store.verify("boss", "Corr3ct-Horse!"),
                          "文件坏了必须拒登，绝不能放行")
 
 
@@ -113,14 +128,14 @@ class SetupHttpTest(unittest.TestCase):
 
         # 两次不一致被拒
         code, j, _ = call(self.base, "/api/setup", "POST",
-                          {"user": "admin", "password": "correct-horse-battery",
-                           "password2": "different-password"})
+                          {"user": "admin", "password": "Corr3ct-Horse!",
+                           "password2": "different-Pass1!"})
         self.assertEqual(code, 400)
 
         # 正常创建：签发会话
         code, j, hdr = call(self.base, "/api/setup", "POST",
-                            {"user": "admin", "password": "correct-horse-battery",
-                             "password2": "correct-horse-battery"})
+                            {"user": "admin", "password": "Corr3ct-Horse!",
+                             "password2": "Corr3ct-Horse!"})
         self.assertEqual(code, 200, j)
         self.assertEqual(j["user"], "admin")
         cookie = hdr.get("Set-Cookie", "").split(";")[0]
@@ -128,41 +143,41 @@ class SetupHttpTest(unittest.TestCase):
 
         # 创建成功后：入口永久关闭
         code, j, _ = call(self.base, "/api/setup", "POST",
-                          {"user": "eve", "password": "attacker-pass-1",
-                           "password2": "attacker-pass-1"})
+                          {"user": "eve", "password": "attacker-Pass1!",
+                           "password2": "attacker-Pass1!"})
         self.assertEqual(code, 403, "第二次创建必须被拒，不能覆盖")
         code, j, _ = call(self.base, "/api/session")
         self.assertTrue(j["setupDone"])
 
         # 旧口令失效、新口令可登录
         code, _, _ = call(self.base, "/api/login", "POST",
-                          {"user": "eve", "password": "attacker-pass-1"})
+                          {"user": "eve", "password": "attacker-Pass1!"})
         self.assertEqual(code, 401)
         code, j, _ = call(self.base, "/api/login", "POST",
-                          {"user": "admin", "password": "correct-horse-battery"})
+                          {"user": "admin", "password": "Corr3ct-Horse!"})
         self.assertEqual(code, 200)
 
     def test_change_password_invalidates_other_sessions(self):
-        self.ui.auth.create("admin", "correct-horse-battery")
+        self.ui.auth.create("admin", "Corr3ct-Horse!")
 
         # 两个独立会话
         _, _, h1 = call(self.base, "/api/login", "POST",
-                        {"user": "admin", "password": "correct-horse-battery"})
+                        {"user": "admin", "password": "Corr3ct-Horse!"})
         _, _, h2 = call(self.base, "/api/login", "POST",
-                        {"user": "admin", "password": "correct-horse-battery"})
+                        {"user": "admin", "password": "Corr3ct-Horse!"})
         c1 = h1.get("Set-Cookie", "").split(";")[0]
         c2 = h2.get("Set-Cookie", "").split(";")[0]
 
         # 改密码：旧密码错 → 400
         code, j, _ = call(self.base, "/api/password", "POST",
-                          {"old": "wrong", "new": "another-password-1"},
+                          {"old": "wrong", "new": "another-Pass1!"},
                           cookie=c1)
         self.assertEqual(code, 400)
 
         # 改密码成功；当前会话存活，其他会话作废
         code, j, _ = call(self.base, "/api/password", "POST",
-                          {"old": "correct-horse-battery",
-                           "new": "another-password-1"},
+                          {"old": "Corr3ct-Horse!",
+                           "new": "another-Pass1!"},
                           cookie=c1)
         self.assertEqual((code, j["ok"]), (200, True))
         code, j, _ = call(self.base, "/api/state", cookie=c1)
@@ -173,17 +188,17 @@ class SetupHttpTest(unittest.TestCase):
 
         # 新密码登录、旧密码失效
         code, _, _ = call(self.base, "/api/login", "POST",
-                          {"user": "admin", "password": "correct-horse-battery"})
+                          {"user": "admin", "password": "Corr3ct-Horse!"})
         self.assertEqual(code, 401)
         code, _, _ = call(self.base, "/api/login", "POST",
-                          {"user": "admin", "password": "another-password-1"})
+                          {"user": "admin", "password": "another-Pass1!"})
         self.assertEqual(code, 200)
 
     def test_setup_routes_need_no_origin_check_but_actions_do(self):
         """创建/登录本身没有会话（无从谈 Origin），改状态接口仍要求同源。"""
-        self.ui.auth.create("admin", "correct-horse-battery")
+        self.ui.auth.create("admin", "Corr3ct-Horse!")
         code, _, _ = call(self.base, "/api/login", "POST",
-                          {"user": "admin", "password": "correct-horse-battery"},
+                          {"user": "admin", "password": "Corr3ct-Horse!"},
                           origin="http://evil.example")
         self.assertEqual(code, 200, "登录不带会话，不做 Origin 校验")
         cookie = "ipv6sync_web=" + next(iter(self.ui._tokens))

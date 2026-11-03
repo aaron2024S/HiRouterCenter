@@ -1115,7 +1115,7 @@ html[data-theme="light"] .tpick-mask{background:rgba(30,34,56,.34)}
           <div class="wrap has-eye">
             <span class="lead"><svg viewBox="0 0 24 24"><rect x="4.5" y="10" width="15" height="10" rx="2.4"/><path d="M8 10V7.6a4 4 0 0 1 8 0V10"/></svg></span>
             <input class="inp" id="auPass" name="password" type="password"
-                   placeholder="至少 10 位" autocomplete="new-password">
+                   placeholder="至少 8 位，含字母、数字和特殊字符" autocomplete="new-password">
             <button class="aeye" type="button" id="auEye" aria-label="显示密码">
               <svg viewBox="0 0 24 24"><path d="M2.5 12S6 5.8 12 5.8 21.5 12 21.5 12 18 18.2 12 18.2 2.5 12 2.5 12Z"/><circle cx="12" cy="12" r="2.7"/></svg>
             </button>
@@ -1691,7 +1691,7 @@ function showAuth(mode) {
   $('#auRememberRow').hidden = setup;
   $('#auBtnTxt').textContent = setup ? '创建账户' : '登录';
   $('#auSwitch').hidden = !setup;      // 已初始化后服务端拒绝创建，不给假入口
-  $('#auPass').placeholder = setup ? '至少 10 位' : '请输入密码';
+  $('#auPass').placeholder = setup ? '至少 8 位，含字母、数字和特殊字符' : '请输入密码';
   $('#auPass').autocomplete = setup ? 'new-password' : 'current-password';
   $('#auUser').placeholder = setup ? '给管理员起个名字' : '用户名';
   $('#auStr').hidden = !setup;
@@ -1709,18 +1709,19 @@ function showAuErr(msg) {
 }
 function hideAuErr() { $('#auErr').hidden = true; }
 
-/* 密码强度（仅创建模式）：长度 + 字符种类，提示性质，不拦提交 —— 后端有硬校验 */
+/* 密码强度（仅创建模式）：与后端同策略 —— 至少 8 位 + 字母/数字/特殊字符三类齐全。
+   长度+种类给个 0~4 的档位，提示性质，不拦提交 —— 后端有硬校验 */
+function pwKinds(pw) {
+  /* 返回 [字母, 数字, 特殊字符] 三个布尔 */
+  return [/[A-Za-z]/.test(pw), /\d/.test(pw), /[^A-Za-z0-9]/.test(pw)];
+}
 function pwLevel(pw) {
   if (!pw) return 0;
-  let kinds = 0;
-  if (/[a-z]/.test(pw)) kinds++;
-  if (/[A-Z]/.test(pw)) kinds++;
-  if (/\d/.test(pw)) kinds++;
-  if (/[^\w]/.test(pw)) kinds++;
-  if (pw.length < 10) return 1;
-  if (pw.length >= 14 && kinds >= 3) return 4;
-  if (kinds >= 3) return 3;
-  if (kinds >= 2) return 2;
+  const kinds = pwKinds(pw).filter(Boolean).length;
+  if (pw.length < 8) return 1;
+  if (pw.length >= 12 && kinds === 3) return 4;
+  if (kinds === 3) return 3;
+  if (kinds === 2) return 2;
   return 1;
 }
 function syncStrength() {
@@ -1733,12 +1734,22 @@ function syncStrength() {
       hint.dataset.bad = 'false'; hint.dataset.ok = 'false';
       hint.textContent = '这个账号能控制防火墙与设备，请勿与其他网站共用密码。';
       hint.hidden = false;
-    } else if (pw.length < 10) {
+    } else if (pw.length < 8) {
       hint.dataset.bad = 'true'; hint.dataset.ok = 'false';
-      hint.textContent = '还差 ' + (10 - pw.length) + ' 位，至少 10 位';
+      hint.textContent = '还差 ' + (8 - pw.length) + ' 位，至少 8 位';
     } else {
-      hint.dataset.bad = 'false'; hint.dataset.ok = 'true';
-      hint.textContent = '长度够了';
+      const [letter, digit, special] = pwKinds(pw);
+      if (!(letter && digit && special)) {
+        const missing = [];
+        if (!letter) missing.push('字母');
+        if (!digit) missing.push('数字');
+        if (!special) missing.push('特殊字符');
+        hint.dataset.bad = 'true'; hint.dataset.ok = 'false';
+        hint.textContent = '还需包含 ' + missing.join('、');
+      } else {
+        hint.dataset.bad = 'false'; hint.dataset.ok = 'true';
+        hint.textContent = '长度和字符种类都够了';
+      }
     }
     const p2 = $('#auP2Hint');
     p2.hidden = !($('#auPass2').value && $('#auPass2').value !== pw);
