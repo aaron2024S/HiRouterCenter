@@ -845,6 +845,21 @@ class TestConfig(unittest.TestCase):
             else:
                 os.environ["RULES"] = saved
 
+    def test_no_rule_env_means_zero_rules(self):
+        """什么规则变量都没配 → 0 条规则，不再默认塞占位的 NAS 规则。
+
+        旧行为：无 env 时单规则分支返回 Rule(name="NAS", port=None)，
+        设备页于是显示「同步规则 1 条」，用户明明什么都没配（2026-11-03）。"""
+        from app.config import load_rules_from_env
+        for k in ("RULES", "RULES_JSON", "RULES_FILE",
+                  "ENTRY_NAME", "ENTRY_PORT", "REMOTE_IP", "TARGET_MAC"):
+            saved = os.environ.pop(k, None)
+            try:
+                self.assertEqual(load_rules_from_env(), [])
+            finally:
+                if saved is not None:
+                    os.environ[k] = saved
+
     def test_missing_password_exits_only_for_once_mode(self):
         from app.config import load_config
         saved = os.environ.get("ROUTER_PASSWORD")

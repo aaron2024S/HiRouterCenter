@@ -1982,7 +1982,9 @@ function renderInfo() {
         + '<span>' + escHtml(info.wan6) + '</span></button>' : '—'],
     ['IPv6 前缀', escHtml(info.prefix6 || '—')],
     ['Wi-Fi 名称', ssidHtml],
-    ['运行时长', escHtml(info.uptime || '—')],
+    /* UpTime 是路由器固件的开机时长 —— 应用容器重建不影响它。
+       标签写全「路由器运行时长」，避免被理解成本应用跑了多久。 */
+    ['路由器运行时长', escHtml(info.uptime || '—')],
     ['固件版本', fwHtml],
     /* 在线设备数用设备列表的活数据现算：/api/router/info 只在进页面时拉一次，
        它带的 hosts_online 会凝固在那一秒 —— 页面开久了下面筛选条 22、

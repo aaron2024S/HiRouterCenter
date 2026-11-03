@@ -211,7 +211,11 @@ def load_rules_from_env() -> list[Rule]:
                      remote_ip=i.get("remote_ip", "::/0"),
                      mac=i.get("mac")) for i in data]
 
-    # 单规则：从扁平变量拼
+    # 单规则：从扁平变量拼。一个规则变量都没给就返回空 —— 纯网页时代
+    # 规则在白名单页里添加，不能默认塞一条占位规则，否则设备页会显示
+    # 「同步规则 1 条」，用户明明什么都没配（2026-11-03 用户报的 bug）。
+    if not (_env("ENTRY_PORT") or _env("REMOTE_IP") or _env("TARGET_MAC")):
+        return []
     return [Rule(
         name=_env("ENTRY_NAME", "NAS"),
         port=_env("ENTRY_PORT"),
