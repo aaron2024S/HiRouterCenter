@@ -640,5 +640,100 @@ class SyncNotifyIntegrationTest(_LocalNetStub, unittest.TestCase):
         self.assertEqual(s._dev_state, {})       # 基线建好了，没发通知
 
 
+class DeviceTrackTest(unittest.TestCase):
+    """设备上下线比对的边界：固件删记录、老设备回来、空表防误报。
+
+    2026-11-03 用户报「每天上下班收不到手机上下线通知」，就是下面前两条。"""
+
+    def setUp(self):
+        ne.reset_dedupe()
+        self.tmp = tempfile.TemporaryDirectory()
+
+    def tearDown(self):
+        ne.reset_dedupe()
+        self.tmp.cleanup()
+
+    def _syncer(self, keep_seen=False):
+        """keep_seen=True 模拟容器重启：磁盘上的设备档案要照常读回来。"""
+        seen_path = os.path.join(self.tmp.name, "devices_seen.json")
+        if not keep_seen and os.path.exists(seen_path):
+            os.unlink(seen_path)
+        cfg = make_cfg(state_file=os.path.join(self.tmp.name, "state.json"),
+                       notify_wecom_id="85d3153d-1a2b", notify_wecom_enabled=True)
+        s = Syncer(cfg, FakeRouter(entries=[]))
+        if not keep_seen:
+            s._dev_seen = set()
+        s._dev_state = None
+        s._dev_pending_off = {}
+        return s
+
+    _MACS = {"phone": "aa:bb:cc:dd:ee:00",
+             "nas": "aa:bb:cc:dd:ee:01",
+             "tv": "aa:bb:cc:dd:ee:02"}
+
+    @classmethod
+    def _hosts(cls, **active_by_name):
+        """{'phone': True, 'nas': False} → {mac: {'Active': .., 'ActualName': ..}}
+
+        MAC 按名字固定，不能按出现顺序编号 —— 少传一个设备时后面的 MAC
+        会整体错位，A 消失就被认成「B 改名叫了 A」。"""
+        out = {}
+        for name, active in active_by_name.items():
+            out[cls._MACS[name]] = {"Active": 1 if active else 0, "ActualName": name}
+        return out
+
+    def _run(self, s, hosts):
+        with mock.patch.object(ne, "dispatch") as p:
+            s._track_devices(hosts)
+        return [c.args[1] for c in p.call_args_list], p
+
+    def test_offline_after_record_vanishes_from_table(self):
+        """固件把离线设备的记录整条删掉 → 也要发「已离线」。
+
+        只遍历本轮表里有的设备时，记录一消失就再没人检查它，通知永远不发。
+        家里还有别的在线设备（nas），所以不是整张空表。"""
+        s = self._syncer()
+        s._track_devices(self._hosts(phone=True, nas=True))   # 基线
+        codes, _ = self._run(s, self._hosts(nas=True))        # 第 1 轮消失：等确认
+        self.assertEqual(codes, [])
+        codes, p = self._run(s, self._hosts(nas=True))        # 第 2 轮：认离线
+        self.assertEqual(len(p.call_args_list), 1)
+        self.assertEqual(p.call_args_list[0].args[1], "dev_offline")
+        self.assertIn("phone", p.call_args_list[0].args[2])
+
+    def test_old_device_returning_is_online_not_new(self):
+        """消失过又回来的设备是「已上线」，不是「发现新设备」。"""
+        s = self._syncer()
+        s._track_devices(self._hosts(phone=True, nas=True))   # 基线：见过手机
+        s._track_devices(self._hosts(nas=True))               # 消失
+        s._track_devices(self._hosts(nas=True))               # 连两轮 → 认离线
+        codes, p = self._run(s, self._hosts(phone=True, nas=True))   # 回来
+        self.assertEqual(len(p.call_args_list), 1)
+        self.assertEqual(p.call_args_list[0].args[1], "dev_online")
+        self.assertNotIn("dev_new", codes)
+
+    def test_empty_table_never_floods_offline(self):
+        """一整张空表多半是没读好，绝不能当「全网设备同时离线」。"""
+        s = self._syncer()
+        s._track_devices(self._hosts(phone=True, nas=True, tv=True))
+        for _ in range(3):
+            codes, _ = self._run(s, {})
+            self.assertEqual(codes, [])
+        self.assertEqual(len(s._dev_state), 3)              # 基线没被空表冲掉
+
+    def test_seen_survives_rebuild(self):
+        """容器重启后档案还在：离线过的设备回来仍算「已上线」。"""
+        s = self._syncer()
+        s._track_devices(self._hosts(phone=True, nas=True))
+        s._track_devices(self._hosts(nas=True))
+        s._track_devices(self._hosts(nas=True))
+        # 模拟重启：新实例从磁盘读回档案，基线重建
+        s2 = self._syncer(keep_seen=True)
+        self.assertIn("aa:bb:cc:dd:ee:00", s2._dev_seen)
+        s2._track_devices(self._hosts(nas=True))            # 重启时手机不在家
+        codes, p = self._run(s2, self._hosts(phone=True, nas=True))
+        self.assertEqual([c.args[1] for c in p.call_args_list], ["dev_online"])
+
+
 if __name__ == "__main__":
     unittest.main()

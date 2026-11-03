@@ -8,7 +8,9 @@
 from __future__ import annotations
 
 import dataclasses
+import json
 import logging
+import os
 import threading
 import time
 
@@ -84,6 +86,50 @@ class Syncer:
         self.quiet_until = 0.0
         # 设备在线状态基线：None = 还没建过（首轮只建基线，一条通知都不发）
         self._dev_state: dict | None = None
+        # 见过的设备档案（MAC 集合，跨容器重启）：用来区分「老设备回来」和
+        # 「真的来了台新设备」。没有它，设备离线后整条记录从固件表里消失，
+        # 再出现时就会被当成新设备 —— 用户收到的是「发现新设备接入」，
+        # 而不是「设备已上线」（2026-11-03 手机上下班收不到通知）。
+        self._dev_seen: set[str] = self._load_seen()
+        # 「上一轮还在、这一轮整条记录不见了」的待确认计数：MAC → (轮数, 名字)。
+        # 固件偶发漏回几台设备，一轮就报离线会刷一片假告警，连续两轮才认。
+        self._dev_pending_off: dict[str, tuple[int, str]] = {}
+
+    # ---------------- 设备档案（跨重启） ----------------
+
+    def _seen_path(self) -> str:
+        """设备档案文件与 state.json 同目录（都在 /data 卷里）。"""
+        d = os.path.dirname(os.path.abspath(self.cfg.state_file or "/data/state.json"))
+        return os.path.join(d, "devices_seen.json")
+
+    def _load_seen(self) -> set[str]:
+        try:
+            with open(self._seen_path(), encoding="utf-8") as f:
+                v = json.load(f)
+        except (OSError, ValueError):
+            return set()
+        if not isinstance(v, list):
+            return set()
+        return {str(x).strip().lower() for x in v if isinstance(x, str) and x.strip()}
+
+    def _save_seen(self) -> None:
+        path = self._seen_path()
+        try:
+            d = os.path.dirname(path)
+            if d:
+                os.makedirs(d, exist_ok=True)
+            tmp = path + ".tmp"
+            with open(tmp, "w", encoding="utf-8") as f:
+                json.dump(sorted(self._dev_seen), f)
+            os.replace(tmp, path)
+        except OSError as e:
+            log.debug("设备档案写不进去（不影响通知）：%s", e)
+
+    def _remember_devices(self, cur: dict) -> None:
+        before = len(self._dev_seen)
+        self._dev_seen.update(cur)
+        if len(self._dev_seen) != before:
+            self._save_seen()
 
     def _log_event(self, action: str, trigger: str | None = None, **ev) -> None:
         """往修改日志追加一条（文件即数据，见 events.py）。失败不影响同步。"""
@@ -183,6 +229,13 @@ class Syncer:
         **第一轮只建基线不推**：容器每次重启都重新拉一遍设备表，第一轮要是
         当"从无到有"处理，就会把"所有设备同时上线"糊一脸。基线落在内存里，
         重启即失效，正好符合这个语义。
+
+        两条容易踩的坑（2026-11-03 手机上下班一条通知都收不到的根因）：
+        · 只盯「本轮表里有的设备」永远抓不到离线 —— 华为固件会把离线设备的
+          记录整条删掉（不是置 Active=0），记录没了就没人检查它。所以还要
+          反查上一轮在线、这一轮消失的 MAC。
+        · 记录消失过的设备再出现，不能当新设备 —— 拿持久化的「见过」档案
+          区分「老设备回来」和「真的来了台新的」。
         """
         cur: dict = {}
         for mac, h in hosts_by_mac.items():
@@ -191,18 +244,47 @@ class Syncer:
                         discover.host_display_name(h))
         if self._dev_state is None:
             self._dev_state = cur
+            self._remember_devices(cur)
             log.info("设备在线状态基线已建立：%d 台", len(cur))
+            return
+        if not cur:
+            # 一整张空表多半是这轮没读好（固件抽风 / 请求被截断），
+            # 别拿它当"全网设备同时离线"，基线也留着下一轮再比。
+            log.debug("这一轮设备表是空的，跳过上下线比对")
             return
         came, went, fresh = [], [], []
         for mac, (active, name) in cur.items():
             old = self._dev_state.get(mac)
-            if old is None:
-                fresh.append(f"{name or mac}（{mac}）")
-            elif active and not old[0]:
+            if old is not None:
+                if active and not old[0]:
+                    came.append(name or mac)
+                elif not active and old[0]:
+                    went.append(name or mac)
+                self._dev_pending_off.pop(mac, None)
+            elif mac in self._dev_seen:
+                # 见过、但中途从设备表里消失过 —— 这是"回来了"，不是新设备
                 came.append(name or mac)
-            elif not active and old[0]:
-                went.append(name or mac)
+            else:
+                fresh.append(f"{name or mac}（{mac}）")
+        # 待确认离线的（上一轮整条记录消失的）：每轮继续数，连两轮才认
+        for mac in list(self._dev_pending_off):
+            if mac in cur:
+                self._dev_pending_off.pop(mac, None)     # 又出现了，不算离线
+                continue
+            n, nm = self._dev_pending_off[mac]
+            n += 1
+            if n >= 2:
+                went.append(nm or mac)
+                self._dev_pending_off.pop(mac, None)
+            else:
+                self._dev_pending_off[mac] = (n, nm)
+        # 这一轮新消失的（上轮在线、本轮整条记录都没了）先进待确认
+        for mac, (active, name) in self._dev_state.items():
+            if mac in cur or not active or mac in self._dev_pending_off:
+                continue
+            self._dev_pending_off[mac] = (1, name)
         self._dev_state = cur
+        self._remember_devices(cur)
         if came:
             notify_events.dispatch(self.cfg, "dev_online",
                                    "、".join(came) + " 重新连上了网络",
