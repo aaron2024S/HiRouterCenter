@@ -1109,7 +1109,7 @@ html[data-theme="light"] .tpick-mask{background:rgba(30,34,56,.34)}
           <div class="wrap">
             <span class="lead"><svg viewBox="0 0 24 24"><circle cx="12" cy="8.5" r="3.4"/><path d="M5 19.5c1.3-3.2 4-4.8 7-4.8s5.7 1.6 7 4.8"/></svg></span>
             <input class="inp" id="auUser" name="username" placeholder="给管理员起个名字"
-                   autocomplete="username" spellcheck="false" value="admin"></div>
+                   autocomplete="username" spellcheck="false"></div>
         </label>
         <label class="efld"><span>密码</span>
           <div class="wrap has-eye">
@@ -1693,9 +1693,11 @@ function showAuth(mode) {
   $('#auSwitch').hidden = !setup;      // 已初始化后服务端拒绝创建，不给假入口
   $('#auPass').placeholder = setup ? '至少 10 位' : '请输入密码';
   $('#auPass').autocomplete = setup ? 'new-password' : 'current-password';
+  $('#auUser').placeholder = setup ? '给管理员起个名字' : '用户名';
   $('#auStr').hidden = !setup;
-  /* 每次进来都从干净状态开始 */
+  /* 每次进来都从干净状态开始（用户名不预填，注册/登录都让用户自己输） */
   hideAuErr();
+  $('#auUser').value = '';
   $('#auPass').value = ''; $('#auPass2').value = '';
   syncStrength();
   setTimeout(() => { const p = setup ? $('#auUser') : $('#auPass'); if (p) p.focus(); }, 60);
