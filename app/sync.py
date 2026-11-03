@@ -595,6 +595,14 @@ class Syncer:
                                 addr="总开关已开启" if enabled
                                 else "总开关已关闭（进入待机）", port="")
             self._fw_seen = enabled
+            # 设备表一次拉取、所有设备规则共用（每规则各拉一次太浪费）。
+            # 必须放在防火墙开关判断之前：开关关闭进入待机时只是「不写白名单」，
+            # 设备上下线比对照跑 —— 否则防火墙关着的日子里设备通知永远收不到。
+            hosts_by_mac = self._host_map()
+            try:
+                self._track_devices(hosts_by_mac)
+            except Exception as e:  # noqa: BLE001
+                log.warning("设备上下线比对失败（不影响同步）：%s", e)
             if not enabled:
                 if self.cfg.ensure_firewall_on:
                     log.warning("IPv6 防火墙当前是关闭的，白名单不会生效 —— 正在打开")
@@ -625,12 +633,6 @@ class Syncer:
                     self.last_success_at = self.last_tick_at
                     return self.snapshot(ok=True)
 
-            # 设备表一次拉取、所有设备规则共用（每规则各拉一次太浪费）
-            hosts_by_mac = self._host_map()
-            try:
-                self._track_devices(hosts_by_mac)
-            except Exception as e:  # noqa: BLE001
-                log.warning("设备上下线比对失败（不影响同步）：%s", e)
             for rule in self.cfg.rules:
                 try:
                     self.sync_rule(rule, hosts_by_mac)

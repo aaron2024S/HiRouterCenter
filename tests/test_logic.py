@@ -358,6 +358,22 @@ class TestSyncer(LocalNetStub, unittest.TestCase):
         self.assertEqual(snap["rules"]["NAS"]["action"], "created")
         self.assertEqual(r.entries[0]["LocalIp"], C(OLD_ADDR))
 
+    def test_firewall_off_still_tracks_devices(self):
+        """回归：开关关闭进入待机时，设备上下线比对照跑。
+
+        设备比对曾被排在「开关关闭 → 提前 return」之后，防火墙待机期间
+        后台比对一轮都不跑，设备上下线通知永远发不出来。"""
+        r = FakeRouter(enabled=False, entries=[])
+        s = Syncer(make_cfg(), r)
+        snap = s.tick()
+        self.assertEqual(r.writes, [])               # 白名单仍不写
+        self.assertTrue(snap["devices"].get("at"))   # 但比对跑了
+        self.assertEqual(snap["devices"]["total"], 1)
+        # 重新打开开关 → 下一轮照常恢复同步
+        r.enabled = True
+        snap = s.tick()
+        self.assertEqual(snap["rules"]["NAS"]["action"], "created")
+
     def test_unchanged_when_router_formats_address_differently(self):
         """回归：路由器回读的地址写法与 HostInfo 不同（大写/未压缩），
         但地址其实没变 —— 必须判为无变化。
