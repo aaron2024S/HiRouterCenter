@@ -1457,6 +1457,7 @@ html[data-theme="light"] .tpick-mask{background:rgba(30,34,56,.34)}
         </div>
 
         <div id="n-tab-history" style="display:none">
+          <p class="sub" id="devTrackHint" style="margin:0 0 12px;font-size:12px"></p>
           <div class="card">
             <div class="ch"><svg class="i"><use href="#i-history"/></svg><span>推送历史</span>
               <span class="hint" id="histHint"></span></div>
@@ -2508,8 +2509,39 @@ function renderCounts() {
     : ((S.state && S.state.overview && (S.state.overview.rules || []).length) || '');
   $('#cntTask').textContent = S.tasks ? (S.tasks.tasks || []).length : '';
   $('#cntChan').textContent = S.notify ? (S.notify.channels || []).length : '';
-  $('#devSub').textContent = st.last_error
-    ? ('上次同步失败：' + st.last_error) : '';
+  if (st.last_error) {
+    $('#devSub').textContent = '上次同步失败：' + st.last_error;
+  } else {
+    /* 没错误就把页头 sub 让给后台设备比对状态 —— 用户在这里就能确认
+       「下线了后台看没看到」，不用去翻容器日志。 */
+    const dv = st.devices || null;
+    $('#devSub').textContent = (!dv || !dv.at) ? ''
+      : ('后台设备比对：共 ' + dv.total + ' 台（在线 ' + dv.online + '）'
+        + ' · 最近一轮 ' + dv.at
+        + (dv.pending_off ? ' · ' + dv.pending_off + ' 台消失中，待确认' : ''));
+  }
+}
+/* 通知页推送历史上方的比对状态行。数据随 5 秒状态轮询走，进页面即最新。 */
+function renderDevTrackHint() {
+  const st = (S.state && S.state.status) || {};
+  const dv = st.devices || null;
+  const dvEl = $('#devTrackHint');
+  if (!dvEl) return;
+  if (!dv || !dv.at) {
+    dvEl.textContent = '后台设备比对还没跑过第一轮 —— 未配置路由器密码，或同步循环还没启动。'
+      + '比对没跑，设备上下线通知一条都不会有。';
+    return;
+  }
+  const parts = ['后台设备比对：共 ' + dv.total + ' 台（在线 ' + dv.online + '）'
+    + ' · 最近一轮 ' + dv.at];
+  const chg = [].concat(
+    (dv.came || []).map(x => x + ' 上线'),
+    (dv.went || []).map(x => x + ' 离线'),
+    (dv.fresh || []).map(x => x + ' 新接入'));
+  parts.push(chg.length ? '本轮变化：' + chg.join('、')
+    : (dv.pending_off ? '有 ' + dv.pending_off + ' 台从设备表消失中（连续两轮确认后才算离线）'
+      : '本轮无变化'));
+  dvEl.textContent = parts.join(' · ');
 }
 /* Mesh 节点下拉 + 说明条 + 节点卡。
    三者都只在「拓扑可用且真的分出了组」时出现；否则整块隐藏，界面回到单路由的样子。 */
@@ -3596,6 +3628,7 @@ function renderHistory() {
   if (!h) { tb.innerHTML = '<tr><td colspan="5" class="sub">正在读取…</td></tr>'; return; }
   const items = (h.items || []).slice().reverse();
   $('#histHint').textContent = '最近 ' + (h.max || 50) + ' 条 · 上限 ' + (h.limit || 200) + ' 条';
+  renderDevTrackHint();
   tb.innerHTML = '';
   items.forEach(x => {
     const bad = !x.ok;
@@ -4103,6 +4136,7 @@ async function refreshState() {
   if (S.page === 'firewall') renderFwKv();
   if (S.page === 'router') renderConnBadge();   // 只刷徽标，表单字段不动
   if (S.page === 'about') renderAbout();
+  renderDevTrackHint();                          // 通知页的比对状态行跟着 5s 轮询走
 }
 
 /* 启动 */

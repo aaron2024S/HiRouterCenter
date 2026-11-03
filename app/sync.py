@@ -94,6 +94,8 @@ class Syncer:
         # 「上一轮还在、这一轮整条记录不见了」的待确认计数：MAC → (轮数, 名字)。
         # 固件偶发漏回几台设备，一轮就报离线会刷一片假告警，连续两轮才认。
         self._dev_pending_off: dict[str, tuple[int, str]] = {}
+        # 最近一轮设备比对的结果（给网页看的：通知收没收到，先看后台看没看到）
+        self.dev_stats: dict = {}
 
     # ---------------- 设备档案（跨重启） ----------------
 
@@ -245,6 +247,7 @@ class Syncer:
         if self._dev_state is None:
             self._dev_state = cur
             self._remember_devices(cur)
+            self._record_dev_stats(cur, [], [], [])
             log.info("设备在线状态基线已建立：%d 台", len(cur))
             return
         if not cur:
@@ -285,6 +288,7 @@ class Syncer:
             self._dev_pending_off[mac] = (1, name)
         self._dev_state = cur
         self._remember_devices(cur)
+        self._record_dev_stats(cur, came, went, fresh)
         if came:
             notify_events.dispatch(self.cfg, "dev_online",
                                    "、".join(came) + " 重新连上了网络",
@@ -297,6 +301,23 @@ class Syncer:
             notify_events.dispatch(self.cfg, "dev_new",
                                    "陌生设备 " + "、".join(fresh) + " 接入了网络",
                                    subject=fresh[0])
+
+    def _record_dev_stats(self, cur: dict, came: list, went: list, fresh: list) -> None:
+        """把最近一轮比对的结果留在 snapshot 上 —— 用户在通知页能直接看到
+        「后台到底比没比、看到没有」，不用再翻容器日志排障。"""
+        self.dev_stats = {
+            "at": time.strftime("%Y-%m-%d %H:%M:%S"),
+            "total": len(cur),
+            "online": sum(1 for a, _ in cur.values() if a),
+            "came": came, "went": went,
+            "fresh": [n.split("（")[0] for n in fresh],
+            "pending_off": len(self._dev_pending_off),
+        }
+        if came or went or fresh:
+            log.info("设备比对：共 %d 台（在线 %d），上线 %s，离线 %s，新设备 %s",
+                     len(cur), self.dev_stats["online"],
+                     "、".join(came) or "-", "、".join(went) or "-",
+                     "、".join(self.dev_stats["fresh"]) or "-")
 
     def _host_map(self) -> dict:
         """把 HostInfo 按 MAC（规范化小写）建索引；一次请求供所有设备规则共用。"""
@@ -729,6 +750,7 @@ class Syncer:
                 self.router, "logged_in", False),
             "firewall_ipv6_enabled": self.firewall_on,
             "dry_run": self.cfg.dry_run,
+            "devices": self.dev_stats,
             "rules": {k: dataclasses.asdict(v) for k, v in self.states.items()},
         }
         return data
