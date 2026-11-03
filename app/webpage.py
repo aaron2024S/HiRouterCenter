@@ -609,8 +609,10 @@ html[data-theme="light"] .tpick-mask{background:rgba(30,34,56,.34)}
 .aerr[hidden]{display:none}
 /* 登录门表单的行距要放宽：字段贴字段、复选框贴输入框都被用户点名过
    （2026-11-03 对照 MailNest 的留白改的）。只作用在 .abox 里，
-   不影响设置页等处共用的 .efld。 */
-.abox .efld{margin-bottom:19px}
+   不影响设置页等处共用的 .efld。
+   ⚠ .efld 是 <label>，默认 display:inline —— 行内元素上的 margin-bottom
+   完全不生效（上一轮只改数值、没改 display，等于白改）。必须显式 block。 */
+.abox .efld{display:block;margin-bottom:20px}
 .abox .efld>span{display:block;margin-bottom:8px;font-size:12px;font-weight:550;
   color:var(--text-2)}
 .abox .wrap{position:relative;display:flex;align-items:center}
