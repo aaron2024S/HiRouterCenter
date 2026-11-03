@@ -3821,6 +3821,11 @@ async function loadSettings() {
   if (st) { S.state = st; }
   renderSettings();
 }
+/* 设置页的脏标记：用户动过任何一个字段就暂停轮询重绘。
+   renderSettings() 是整表重建，5 秒一轮的 refreshState 若照常跑，
+   正在输入的密码/数字会在敲到一半时被冲掉（实测血案）。 */
+let setDirty = false;
+function markSetDirty() { setDirty = true; }
 function renderSettings() {
   const st = S.state;
   if (!st) return;
@@ -3836,6 +3841,7 @@ function renderSettings() {
     if (!holder) return;
     (g.fields || []).forEach(f => holder.appendChild(fieldRow(f)));
   });
+  setDirty = false;    // 重建完成，恢复轮询刷新
   const ready = ov.password_set;
   const badge = $('#connBadge');
   const okConn = !!(S.info && S.info.ok);
@@ -3879,6 +3885,14 @@ function fieldRow(f) {
   row.appendChild(ctl);
   return row;
 }
+/* 用户改任何字段 → 标脏：轮询暂停重绘，直到保存成功或离开本页 */
+$('#p-router').addEventListener('input', markSetDirty);
+$('#p-router').addEventListener('change', markSetDirty);
+$('#p-router').addEventListener('click', (e) => {
+  const sw = e.target.closest('.sw');      // 布尔开关不走 input/change 事件
+  if (sw) markSetDirty();
+});
+
 $('#btnSaveSettings').addEventListener('click', async () => {
   const patch = {};
   $$('#p-router [data-key]').forEach(n => {
@@ -3982,6 +3996,7 @@ $$('.ni[data-page]').forEach(b => b.addEventListener('click', () => {
   b.setAttribute('aria-current', 'true');
   const p = b.dataset.page;
   S.page = p;
+  if (p !== 'router') setDirty = false;    // 离开设置页：未保存的修改就地放弃
   $$('.page').forEach(x => x.classList.add('hide'));
   document.getElementById('p-' + p).classList.remove('hide');
   document.getElementById('ctx').textContent = CTX_TEXT[p] || '';
@@ -4088,7 +4103,7 @@ async function refreshState() {
   renderCounts();
   if (S.page === 'devices') renderInfo();
   if (S.page === 'firewall') renderFwKv();
-  if (S.page === 'router') renderSettings();
+  if (S.page === 'router' && !setDirty) renderSettings();   // 脏了就让位给用户输入
   if (S.page === 'about') renderAbout();
 }
 
