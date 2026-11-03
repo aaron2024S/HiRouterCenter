@@ -646,7 +646,7 @@ html[data-theme="light"] .tpick-mask{background:rgba(30,34,56,.34)}
 .aswitch a{color:var(--accent-text);text-decoration:none;cursor:pointer;font-weight:600}
 .aswitch a:hover{text-decoration:underline}
 .afoot{margin-top:auto;padding:18px 44px 20px;font-size:11px;color:var(--text-5);
-  display:flex;align-items:center;gap:7px;flex-wrap:wrap}
+  display:flex;align-items:center;justify-content:center;gap:7px;flex-wrap:wrap}
 .afoot .dot{width:3px;height:3px;border-radius:50%;background:currentColor;opacity:.55}
 @media (max-width:860px){
   .auth{grid-template-columns:1fr;grid-template-rows:auto 1fr}
@@ -1081,13 +1081,13 @@ html[data-theme="light"] .tpick-mask{background:rgba(30,34,56,.34)}
       <span class="mark"><svg viewBox="0 0 32 32" style="width:22px;height:22px"><use href="#i-mark"/></svg></span>
       <div><b>HiRouterCenter</b><span class="tag">华为路由器控制台</span></div>
     </div>
-    <h1>路由器、白名单、<br><em>一个控制台管完</em></h1>
-    <p class="lede">把 IPv6 防火墙白名单交给它自动跟进，设备在线情况与出口速率一屏看清。</p>
+    <h1>把路由器管理台，<br><em>搬进自己的浏览器</em></h1>
+    <p class="lede">设备、Wi-Fi、防火墙白名单一屏管完，不必在厂商界面里翻菜单。</p>
     <ul class="afeats">
-      <li><span class="fi"><svg viewBox="0 0 24 24"><path d="M12 3l7 3v5.5c0 4.3-2.9 7.6-7 9-4.1-1.4-7-4.7-7-9V6l7-3Z"/><path d="m9 12 2 2 4-4"/></svg></span>
-        <div><b>白名单自动同步</b>公网地址变了，防火墙规则跟着变，不用手动改</div></li>
       <li><span class="fi"><svg viewBox="0 0 24 24"><path d="M3 8.5h13a3 3 0 0 1 3 3v3a3 3 0 0 1-3 3H3"/><circle cx="6.5" cy="13" r="1.2" fill="#fff" stroke="none"/><circle cx="11" cy="13" r="1.2" fill="#fff" stroke="none" opacity=".5"/><path d="M19 9V6M22 11V8"/></svg></span>
-        <div><b>设备与速率一屏看清</b>在线状态、实时上下行、出口速率都在首页</div></li>
+        <div><b>设备与速率一屏看清</b>在线状态、实时上下行、出口速率，刷新即所见</div></li>
+      <li><span class="fi"><svg viewBox="0 0 24 24"><path d="M12 3l7 3v5.5c0 4.3-2.9 7.6-7 9-4.1-1.4-7-4.7-7-9V6l7-3Z"/><path d="m9 12 2 2 4-4"/></svg></span>
+        <div><b>防火墙白名单自动跟进</b>公网地址变了规则跟着变，IPv6 放行不用手动改</div></li>
       <li><span class="fi"><svg viewBox="0 0 24 24"><rect x="4" y="10" width="16" height="10" rx="2.5"/><path d="M8 10V7.5a4 4 0 0 1 8 0V10"/><circle cx="12" cy="15" r="1.3" fill="#fff" stroke="none"/></svg></span>
         <div><b>只存在你的机器上</b>配置和凭据都写在本地容器里，不出内网</div></li>
     </ul>
@@ -4113,6 +4113,11 @@ async function boot() {
 (async function start() {
   try {
     const s = await (await fetch('/api/session')).json();
+    if (s && s.version) {                  // 认证页页脚在登录前就要显示版本号
+      S.version = s.version;
+      const ver = $('#auVer');
+      if (ver) ver.textContent = 'HiRouterCenter ' + s.version;
+    }
     if (s && s.authed) {
       S.authed = true;
       await boot();

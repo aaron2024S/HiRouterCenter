@@ -206,8 +206,11 @@ class WebUI:
             return
 
         if method == "GET" and route == "/api/session":
+            # version 一并返回：登录页页脚要显示「HiRouterCenter x.y.z」，
+            # 而 boot()（里面才拉 /api/version）要等登录后才跑
             return handler.send_json({"authed": bool(user), "user": user or "",
-                                      "setupDone": self.setup_done()})
+                                      "setupDone": self.setup_done(),
+                                      "version": _version()})
 
         if method == "POST" and route == "/api/password":
             return self._change_password(handler, body, user, token)
