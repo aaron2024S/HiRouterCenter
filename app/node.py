@@ -13,6 +13,7 @@
 """
 from __future__ import annotations
 
+import contextlib
 import ipaddress
 import logging
 import os
@@ -26,6 +27,14 @@ from .router import HuaweiRouter, NotLoggedIn, RouterError, SessionExpired
 from .sync import Syncer
 
 log = logging.getLogger("ipv6sync.node")
+
+# 等同步锁的上限。tick() 可能跑几十秒（多规则 × 单次 10 秒超时），
+# 网页请求不该在这个锁上无限排队 —— 用户看到的是"按钮点了没反应"。
+SYNC_LOCK_TIMEOUT = 8.0
+
+
+class Busy(RuntimeError):
+    """同步正在进行，等不到锁。给网页回一句人话，别让请求干挂着。"""
 
 
 def make_router(cfg) -> HuaweiRouter:
@@ -368,6 +377,21 @@ class Node:
 
     # ---------------- 只读视图 ----------------
 
+    @contextlib.contextmanager
+    def _sync_lock(self, timeout: float = SYNC_LOCK_TIMEOUT):
+        """拿同步锁，等太久就抛 Busy（而不是让 HTTP 请求无限排队）。
+
+        同步一轮可能几十秒（每条规则都要读写路由器，还带 10 秒超时）。
+        用户在网页上点「立即同步」时，如果主循环正跑着，原来会一直挂着
+        直到浏览器超时 —— 看起来就是"按钮点了没反应"。
+        """
+        if not self.syncer.lock.acquire(timeout=timeout):
+            raise Busy("同步正在进行")
+        try:
+            yield
+        finally:
+            self.syncer.lock.release()
+
     def snapshot(self) -> dict:
         return self.syncer.snapshot()
 
@@ -472,8 +496,13 @@ class Node:
         return self.syncer.tick()
 
     def test_connection(self) -> dict:
-        """测试路由器连通性与账号是否可用：登录 + 读设备信息。"""
-        with self.syncer.lock:
+        """测试路由器连通性与账号是否可用：登录 + 读设备信息。
+
+        用户点「测试连接」等于显式确认过密码了 —— 顺便解除「密码连错已暂停
+        自动重试」，否则用户改对密码后还是什么都不动，只会以为程序坏了。
+        """
+        with self._sync_lock():
+            self.syncer.resume_login()
             err = self._logged_in()
             if err:
                 return {"ok": False, "error": err}
@@ -494,7 +523,7 @@ class Node:
 
     def whitelist(self) -> dict:
         """实读 IPv6 防火墙白名单，附带规则列表与设备数据（弹窗选址用）。"""
-        with self.syncer.lock:
+        with self._sync_lock():
             err = self._logged_in()
             if err:
                 return {"ok": False, "error": err}
@@ -521,7 +550,7 @@ class Node:
 
     def set_firewall(self, on: bool) -> dict:
         """开 / 关 IPv6 防火墙总开关（网页上的显式动作，不自动做）。"""
-        with self.syncer.lock:
+        with self._sync_lock():
             err = self._logged_in()
             if err:
                 return {"ok": False, "error": err}
@@ -541,7 +570,7 @@ class Node:
 
     def reset_counters(self) -> dict:
         """清零累计写入计数（网页「重置累计写入」按钮，需在网页上显式确认）。"""
-        with self.syncer.lock:
+        with self._sync_lock():
             self.syncer.counters.reset()
             self.syncer.counters.flush()
             log.info("累计写入计数已从网页重置清零")
@@ -698,7 +727,7 @@ class Node:
 
     def router_info(self) -> dict:
         """首页信息卡的数据（型号 / 运行时长 / WAN 地址 / Wi-Fi 名称…）。"""
-        with self.syncer.lock:
+        with self._sync_lock():
             try:
                 info = router_info.collect(self.router)
             except RouterError as e:
@@ -761,7 +790,7 @@ class Node:
             raise st.SettingsError("设备名称不能为空")
         if len(name) > 20:
             raise st.SettingsError("设备名称最多 20 个字")
-        with self.syncer.lock:
+        with self._sync_lock():
             err = self._logged_in()
             if err:
                 return {"ok": False, "error": err}
@@ -792,7 +821,7 @@ class Node:
             raise st.SettingsError("限速值要填数字") from None
         if up > 1024 * 1024 or down > 1024 * 1024:
             raise st.SettingsError("限速值太大了")
-        with self.syncer.lock:
+        with self._sync_lock():
             err = self._logged_in()
             if err:
                 return {"ok": False, "error": err}
@@ -889,7 +918,7 @@ class Node:
         mac = str(mac or "").strip().upper()
         if not mac:
             raise st.SettingsError("缺少设备 MAC")
-        with self.syncer.lock:
+        with self._sync_lock():
             err = self._logged_in()
             if err:
                 return {"ok": False, "error": err}
@@ -977,7 +1006,7 @@ class Node:
             if mode not in tk.POWER_MODES:
                 raise st.SettingsError("功率模式档位不对")
             task["params"] = {"power_mode": mode}
-        with self.syncer.lock:
+        with self._sync_lock():
             err = self._logged_in()
             if err:
                 return {"ok": False, "error": err}
@@ -1148,7 +1177,7 @@ class Node:
 
     def hosts(self) -> dict:
         """设备列表（在线/离线/儿童上网 + WiFi 黑名单）。"""
-        with self.syncer.lock:
+        with self._sync_lock():
             err = self._logged_in()
             if err:
                 return {"ok": False, "error": err}
@@ -1202,7 +1231,7 @@ class Node:
         才回落到 `_logged_in()` 走重登流程 —— 那个函数本身要探一次会话来判断，
         例行轮询里能省就省。
         """
-        with self.syncer.lock:
+        with self._sync_lock():
             try:
                 raw = self.router.get("HostInfo") or []
             except (NotLoggedIn, SessionExpired):
@@ -1268,7 +1297,7 @@ class Node:
         if len(mac) != 12:
             raise st.SettingsError("MAC 格式不对，应为 6 段十六进制（如 3C:7C:3F:11:22:33）")
 
-        with self.syncer.lock:
+        with self._sync_lock():
             err = self._logged_in()
             if err:
                 return {"ok": False, "error": err}
@@ -1410,7 +1439,7 @@ class Node:
         不然规则没了名字就没人认领，那些条目永远躺在白名单里。
         """
         action = str(data.get("action") or "")
-        with self.syncer.lock:
+        with self._sync_lock():
             err = self._logged_in()
             if err:
                 return {"ok": False, "error": err}
@@ -1476,7 +1505,7 @@ class Node:
         """删除路由器白名单上的一条条目（手工条目的删除按钮）。"""
         entry_id = str(data.get("id") or "").strip()
         name = str(data.get("name") or "").strip()
-        with self.syncer.lock:
+        with self._sync_lock():
             err = self._logged_in()
             if err:
                 return {"ok": False, "error": err}
@@ -1526,7 +1555,7 @@ class Node:
                     raise st.SettingsError(
                         "放行端口格式不对：多个端口用英文逗号分隔，"
                         "每个 1-65535，或 -1 表示全部端口")
-        with self.syncer.lock:
+        with self._sync_lock():
             err = self._logged_in()
             if err:
                 return {"ok": False, "error": err}

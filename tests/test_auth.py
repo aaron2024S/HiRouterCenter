@@ -194,13 +194,20 @@ class SetupHttpTest(unittest.TestCase):
                           {"user": "admin", "password": "another-Pass1!"})
         self.assertEqual(code, 200)
 
-    def test_setup_routes_need_no_origin_check_but_actions_do(self):
-        """创建/登录本身没有会话（无从谈 Origin），改状态接口仍要求同源。"""
+    def test_setup_and_login_also_require_same_origin(self):
+        """创建/登录虽然还没有会话，也必须过同源校验（审查 H-1 / H-2）。
+
+        没会话不等于可以放行来源：否则任意网页都能跨站抢注管理员
+        （初始化窗口内），或拿着登录接口当无来源限制的口令探测口。
+        """
         self.ui.auth.create("admin", "Corr3ct-Horse!")
         code, _, _ = call(self.base, "/api/login", "POST",
                           {"user": "admin", "password": "Corr3ct-Horse!"},
                           origin="http://evil.example")
-        self.assertEqual(code, 200, "登录不带会话，不做 Origin 校验")
+        self.assertEqual(code, 403, "跨站登录必须拒绝")
+        code, _, _ = call(self.base, "/api/login", "POST",
+                          {"user": "admin", "password": "Corr3ct-Horse!"})
+        self.assertEqual(code, 200, "同源/无 Origin 的登录照常")
         cookie = "ipv6sync_web=" + next(iter(self.ui._tokens))
         code, _, _ = call(self.base, "/api/sync", "POST", {},
                           cookie=cookie, origin="http://evil.example")

@@ -17,11 +17,15 @@ import base64
 import hashlib
 import hmac
 import json
+import logging
 import os
 import re
 import secrets
 import tempfile
+import threading
 import time
+
+log = logging.getLogger("ipv6sync.auth")
 
 ALGO = "scrypt"
 N, R, P, DKLEN = 2 ** 14, 8, 1, 32          # OWASP 推荐：n=2^14, r=8, p=1
@@ -31,6 +35,23 @@ USERNAME_RE = re.compile(r"^[A-Za-z0-9_.\-]{2,32}$")
 
 class AuthError(ValueError):
     """凭据不合法（用户名格式 / 密码强度 / 已初始化）。"""
+
+
+class WrongPassword(AuthError):
+    """旧密码不对 —— 调用方要把它计入登录失败账本（防爆破）。"""
+
+
+# 用户名不存在时也要跑一次 scrypt，否则「用户名错」会秒回、
+# 「用户名对但密码错」要 130ms+，从响应时间就能问出用户名对不对。
+# 这份假记录在导入时算一次，之后每次 verify 直接复用。
+_DUMMY_REC = None
+
+
+def _dummy_rec() -> dict:
+    global _DUMMY_REC
+    if _DUMMY_REC is None:
+        _DUMMY_REC = _hash("dummy-password-for-timing-only")
+    return _DUMMY_REC
 
 
 def check_username(name: str) -> str:
@@ -90,6 +111,8 @@ class AuthStore:
 
     def __init__(self, path: str):
         self.path = path
+        self._mu = threading.Lock()      # 并发 create / update_password 串行化
+        self._last_warn = 0.0
 
     # ---- 状态 ----
 
@@ -100,9 +123,28 @@ class AuthStore:
         try:
             with open(self.path, encoding="utf-8") as f:
                 data = json.load(f)
-            return data if isinstance(data, dict) and data.get("username") else None
-        except (OSError, ValueError):
+        except FileNotFoundError:
             return None
+        except (OSError, ValueError) as e:
+            self._warn_broken(e)
+            return None
+        if isinstance(data, dict) and data.get("username"):
+            return data
+        self._warn_broken("缺少 username 字段")
+        return None
+
+    def _warn_broken(self, why) -> None:
+        """凭据文件读不出来。这条日志是用户唯一的自救线索，别忘了打。"""
+        now = time.time()
+        if now - self._last_warn < 60:      # 5 秒一次的轮询别把日志刷爆
+            return
+        self._last_warn = now
+        log.error("凭据文件无法解析（可能已损坏）：%s —— %s。"
+                  "删除该文件并重启容器即可重新创建管理员。", self.path, why)
+
+    def broken(self) -> bool:
+        """文件在、但读不出可用记录 = 损坏（掉电 / 磁盘满 / 手工改坏）。"""
+        return self.exists() and self.load() is None
 
     def username(self) -> str:
         rec = self.load()
@@ -111,23 +153,43 @@ class AuthStore:
     # ---- 变更 ----
 
     def create(self, username: str, password: str) -> dict:
-        """创建管理员。只允许成功一次 —— 之后一切创建请求都拒绝。"""
-        if self.exists():
-            raise AuthError("管理员已存在，请直接登录")
+        """创建管理员。只允许成功一次 —— 之后一切创建请求都拒绝。
+
+        唯一的例外是**凭据文件损坏**：这时允许重建，否则控制台会锁死
+        （入口关着、登录永远失败）。旧文件先改名留证，不静默覆盖。
+        """
         name = check_username(username)
         pw = check_password(password)
-        rec = {"username": name, "password": _hash(pw),
-               "created_at": int(time.time()), "updated_at": int(time.time())}
-        self._write(rec)
-        return rec
+        with self._mu:
+            if self.exists():
+                if not self.broken():
+                    raise AuthError("管理员已存在，请直接登录")
+                backup = f"{self.path}.broken-{int(time.time())}"
+                try:
+                    os.replace(self.path, backup)
+                    log.error("凭据文件损坏，已备份为 %s 并重新初始化", backup)
+                except OSError as e:
+                    log.error("凭据文件损坏且无法备份（%s），改为直接覆盖", e)
+            rec = {"username": name, "password": _hash(pw),
+                   "created_at": int(time.time()), "updated_at": int(time.time())}
+            self._write(rec)
+            return rec
 
     def verify(self, username: str, password: str) -> bool:
+        """校验用户名 + 密码。
+
+        **两条路径耗时必须同量级**：用户名对不对都跑一次 scrypt。
+        早期版本写成 `ok_u and _verify_hash(...)`，短路让"用户名错"只花 0.3ms，
+        比"用户名对"快 400 多倍 —— 等于把用户名白送（审查报告 M-1）。
+        """
         rec = self.load()
         if not rec:
+            _verify_hash(password or "", _dummy_rec())
             return False
         ok_u = hmac.compare_digest((username or "").encode("utf-8"),
                                    str(rec["username"]).encode("utf-8"))
-        return bool(ok_u and _verify_hash(password or "", rec["password"]))
+        ok_p = _verify_hash(password or "", rec["password"])
+        return bool(ok_u and ok_p)
 
     def update_password(self, old: str, new: str) -> None:
         """已登录的改密。旧密码必须对 —— 防止被劫持的会话直接换锁。"""
@@ -135,11 +197,13 @@ class AuthStore:
         if not rec:
             raise AuthError("管理员尚未创建")
         if not _verify_hash(old or "", rec["password"]):
-            raise AuthError("当前密码不正确")
+            raise WrongPassword("当前密码不正确")
         pw = check_password(new)
-        rec["password"] = _hash(pw)
-        rec["updated_at"] = int(time.time())
-        self._write(rec)
+        with self._mu:
+            rec["password"] = _hash(pw)
+            rec["updated_at"] = int(time.time())
+            self._write(rec)
+
 
     # ---- 落盘 ----
 

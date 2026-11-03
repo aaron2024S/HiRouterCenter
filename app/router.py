@@ -140,9 +140,12 @@ class HuaweiRouter:
         self.session_file = session_file
 
         self.cj = http.cookiejar.CookieJar()
+        # https 目标走**默认严格校验**。早期版本这里 check_hostname=False +
+        # CERT_NONE，等于对 https 目标完全放弃身份校验：中间人拿到会话 cookie
+        # 就能改防火墙、改白名单、重启路由器（密码走 SCRAM 不泄，但会话会泄）。
+        # 家用路由器基本都是 http，改成 https 的是少数；真遇到自签证书，
+        # 报错会直接告诉用户改回 http，而不是静默降级。
         ctx = ssl.create_default_context()
-        ctx.check_hostname = False
-        ctx.verify_mode = ssl.CERT_NONE
         self.opener = urllib.request.build_opener(
             urllib.request.HTTPCookieProcessor(self.cj),
             urllib.request.HTTPSHandler(context=ctx),
@@ -180,8 +183,19 @@ class HuaweiRouter:
                 return r.status, r.read()
         except urllib.error.HTTPError as e:
             return e.code, e.read()
+        except urllib.error.URLError as e:
+            # 证书问题单独说清楚：用户改 https 之后最常见的坑就是自签证书
+            if isinstance(getattr(e, "reason", None), ssl.SSLCertVerificationError):
+                raise NetworkError(
+                    "https 证书校验失败：路由器用的是自签证书或域名不匹配。"
+                    "家用路由器建议把「路由器地址」改回 http://…") from e
+            raise NetworkError(f"连不上路由器：{getattr(e, 'reason', e)}") from e
+        except ssl.SSLCertVerificationError as e:
+            raise NetworkError(
+                "https 证书校验失败：路由器用的是自签证书或域名不匹配。"
+                "家用路由器建议把「路由器地址」改回 http://…") from e
         except Exception as e:  # noqa: BLE001
-            raise NetworkError(f"请求 {url} 失败: {type(e).__name__}: {e}") from e
+            raise NetworkError(f"请求路由器失败：{type(e).__name__}: {e}") from e
 
     def _resolve(self, name_or_path: str) -> str:
         p = API.get(name_or_path, name_or_path)

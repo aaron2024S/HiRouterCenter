@@ -21,6 +21,10 @@ from .router import (AuthFailed, NetworkError, NotLoggedIn, RouterError,
 
 log = logging.getLogger("ipv6sync.sync")
 
+# 连续多少次「密码错」就停止自动重试。华为固件 maxfailtimes=3，留一次余量：
+# 停在 2 次，用户自己去网页改密码还能再试一次，不至于把路由器账号锁死。
+AUTH_FAIL_STOP = 2
+
 
 def _truthy(v) -> bool:
     """固件的开关字段可能是 bool / 1 / "0" / "false" 等各种形态，统一判定。
@@ -70,6 +74,8 @@ class Syncer:
         self.counters = state.Counters(cfg.state_file)
         self.login_fail_count = 0
         self.next_login_at = 0.0
+        # 登录保护记录（跨重启）：密码连错 2 次就停手，别把路由器账号试锁
+        self._guard: dict = self._load_guard()
         self.firewall_on: bool | None = None
         self.started_at = time.strftime("%Y-%m-%d %H:%M:%S")
         # 本轮实际改动了防火墙配置的描述（变更通知的素材），每轮 tick 开头清空
@@ -133,6 +139,54 @@ class Syncer:
         if len(self._dev_seen) != before:
             self._save_seen()
 
+    # ---------------- 路由器账号保护（密码错别把账号试锁） ----------------
+
+    def _guard_path(self) -> str:
+        d = os.path.dirname(os.path.abspath(self.cfg.state_file or "/data/state.json"))
+        return os.path.join(d, "login_guard.json")
+
+    def _load_guard(self) -> dict:
+        """读"上次是不是因为密码错被暂停了"。跨容器重启也要记住 ——
+        重启就清零等于绕过了停手保护，路由器那边照样会被试锁。"""
+        try:
+            with open(self._guard_path(), encoding="utf-8") as f:
+                v = json.load(f)
+            return v if isinstance(v, dict) else {}
+        except (OSError, ValueError):
+            return {}
+
+    def _save_guard(self, data: dict) -> None:
+        path = self._guard_path()
+        try:
+            d = os.path.dirname(path)
+            if d:
+                os.makedirs(d, exist_ok=True)
+            tmp = path + ".tmp"
+            with open(tmp, "w", encoding="utf-8") as f:
+                json.dump(data, f)
+            os.replace(tmp, path)
+        except OSError as e:
+            log.debug("登录保护记录写不进去（不影响同步）：%s", e)
+
+    def auth_paused(self) -> bool:
+        return bool(self._guard.get("paused"))
+
+    def resume_login(self) -> None:
+        """用户在网页上确认过密码了（测试连接 / 重新保存设置），解除暂停。"""
+        self._guard = {}
+        self.login_fail_count = 0
+        self.next_login_at = 0.0
+        self._save_guard({"paused": False, "count": 0})
+        log.info("已解除路由器登录暂停，允许重新尝试")
+
+    def _pause_auth(self) -> None:
+        self._guard = {"paused": True, "count": self.login_fail_count,
+                       "at": time.strftime("%Y-%m-%d %H:%M:%S")}
+        self._save_guard(self._guard)
+        log.error("路由器密码连续错 %d 次，**停止自动重试** —— 华为固件允许的"
+                  "失败次数只有 3 次，再试就会把路由器账号锁死（需要重启路由器才能解）。"
+                  "请在设置里核对密码后点「测试连接」恢复。", self.login_fail_count)
+
     def _log_event(self, action: str, trigger: str | None = None, **ev) -> None:
         """往修改日志追加一条（文件即数据，见 events.py）。失败不影响同步。"""
         events.record(self.cfg.state_file,
@@ -159,8 +213,15 @@ class Syncer:
 
         会清掉登录退避计数 —— 换密码/换地址之后应该立刻允许试一次，
         沿用旧的退避时间会让"改完没反应"看起来像个 bug。
+        **但只有身份真的变了才解除"密码错已暂停"**：改白名单规则也会走到这里，
+        那时顺手重试登录，可能正好把路由器账号的第 3 次失败用掉。
         """
         with self.lock:
+            old = self.cfg
+            cred_changed = (cfg.password != old.password
+                            or cfg.username != old.username
+                            or cfg.host != old.host
+                            or cfg.scheme != old.scheme)
             self.cfg = cfg
             self.router = router
             self.states = {r.name: RuleState(r.name) for r in cfg.rules}
@@ -168,6 +229,8 @@ class Syncer:
             self.next_login_at = 0.0
             self.firewall_on = None
             self.last_error = None
+            if cred_changed and self.auth_paused():
+                self.resume_login()
             log.info("已应用新配置：路由器=%s 用户=%s 周期=%ds 条目=%s",
                      cfg.base_url, cfg.username, cfg.poll_interval,
                      ", ".join(r.name for r in cfg.rules) or "-")
@@ -181,8 +244,10 @@ class Syncer:
     def ensure_login(self) -> bool:
         """复用会话失败才登录。
 
-        密码错误时**指数退避**：设备 maxfailtimes=3，连续错 3 次会锁账号，
-        自动重试必须足够慢，否则会把管理员锁死在门外。
+        密码错误时**指数退避**；连错 2 次直接停手等人工确认。华为固件
+        `maxfailtimes=3`，第 3 次失败会把**路由器账号**锁死（得重启路由器才能解），
+        所以宁可停下来也不能继续自动重试 —— 用户改错密码是很常见的事，
+        不能因为一个手误把路由器一起拖下水（审查报告 L-9）。
         """
         if self.router.logged_in and self.router.check_session():
             return True
@@ -192,6 +257,12 @@ class Syncer:
         if not self.cfg.password:
             self.last_error = ("未配置路由器密码 —— 在「设置 → 路由器连接」"
                                "里填好密码即可开始同步")
+            return False
+
+        if self.auth_paused():
+            self.last_error = ("路由器密码连续输错，已暂停自动重试（再试会把路由器"
+                               "账号锁死）。请在「设置 → 路由器连接」核对密码后点"
+                               "「测试连接」")
             return False
 
         now = time.time()
@@ -204,6 +275,9 @@ class Syncer:
             info = self.router.login()
             self.login_fail_count = 0
             self.next_login_at = 0.0
+            if self._guard.get("paused") or self._guard.get("count"):
+                self._guard = {}
+                self._save_guard({"paused": False, "count": 0})
             log.info("登录成功：user=%s level=%s（服务端签名已校验）",
                      info["username"], info["level"])
             return True
@@ -214,8 +288,14 @@ class Syncer:
             self.next_login_at = time.time() + delay
             self.last_error = f"登录失败：{e}"
             log.error("登录失败（第 %d 次）：%s", self.login_fail_count, e)
-            log.error("已退避 %d 秒后再试 —— 请勿快速重试，设备允许的失败次数只有 3 次",
-                      delay)
+            if self.login_fail_count >= AUTH_FAIL_STOP:
+                self._pause_auth()
+                self.last_error = ("路由器密码不对（已连续 %d 次）。为避免把路由器账号"
+                                   "锁死，已停止自动重试 —— 请在「设置 → 路由器连接」"
+                                   "核对密码后点「测试连接」" % self.login_fail_count)
+            else:
+                log.error("已退避 %d 秒后再试 —— 设备允许的失败次数只有 %d 次，"
+                          "再错一次就会停手", delay, AUTH_FAIL_STOP + 1)
             return False
         except RouterError as e:
             self.last_error = f"登录异常：{e}"
@@ -750,6 +830,9 @@ class Syncer:
             "logged_in": bool(getattr(self.router, "logged_in", False)),
             "unconfigured": not self.cfg.password and not getattr(
                 self.router, "logged_in", False),
+            # 密码连错已停手：网页要据此给出"去核对密码"的引导，而不是让用户
+            # 盯着一个不动的主界面猜。
+            "auth_paused": self.auth_paused(),
             "firewall_ipv6_enabled": self.firewall_on,
             "dry_run": self.cfg.dry_run,
             "devices": self.dev_stats,

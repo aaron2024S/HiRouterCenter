@@ -135,6 +135,16 @@ a.lnk:hover .go{color:var(--accent-text)}
 .phead-right{margin-left:auto;display:flex;flex-wrap:wrap;gap:8px}
 .card{background:var(--ink-700);border:1px solid var(--line-1);border-radius:14px}
 .card.accent{border-color:var(--line-accent-soft);background:var(--soft-accent)}
+/* 引导条：只在"还没配好"和"密码连错已暂停"时出现。
+   之前这两种状态只在页头有一行灰字，新用户首次登录看到满屏「—」完全
+   不知道下一步该干什么。 */
+.guide{display:flex;align-items:center;gap:10px;padding:11px 14px;border-radius:12px;
+  background:var(--soft-warn);border:1px solid var(--line-warn);font-size:12.5px;
+  color:var(--text-2)}
+.guide[hidden]{display:none}
+.guide .i{flex:none;color:var(--warn-text)}
+.guide .gtext{flex:1;min-width:0;line-height:1.5}
+.guide .btn{flex:none}
 .ch{display:flex;align-items:center;gap:8px;border-bottom:1px solid var(--line-1);
   padding:12px 14px;font-weight:600}
 .ch .i{color:var(--text-4)}
@@ -795,6 +805,10 @@ html[data-theme="light"] .tpick-mask{background:rgba(30,34,56,.34)}
   <path d="M5.6 15.2h-.4A1.8 1.8 0 0 1 3.4 13.4V5.2a1.8 1.8 0 0 1 1.8-1.8h8.2a1.8 1.8 0 0 1 1.8 1.8v.4"/>
 </symbol>
 <symbol id="i-check" viewBox="0 0 24 24"><path d="M19.4 6.6 9.4 17 4.6 12.2"/></symbol>
+<symbol id="i-lock" viewBox="0 0 24 24">
+  <rect x="4.5" y="10.5" width="15" height="9.5" rx="2"/>
+  <path d="M8 10.5V7.6a4 4 0 0 1 8 0v2.9"/>
+</symbol>
 <symbol id="i-logout" viewBox="0 0 24 24">
   <path d="M9.4 20.4H5.6a2 2 0 0 1-2-2V5.6a2 2 0 0 1 2-2h3.8"/>
   <path d="M15.6 16.4 20 12l-4.4-4.4M20 12H9.2"/>
@@ -1206,6 +1220,12 @@ html[data-theme="light"] .tpick-mask{background:rgba(30,34,56,.34)}
           </div>
         </div>
 
+        <div class="guide" id="devGuide" hidden>
+          <svg class="i"><use href="#i-alert"/></svg>
+          <div class="gtext" id="devGuideTxt"></div>
+          <button class="btn btn-sm btn-primary" id="devGuideBtn">去配置</button>
+        </div>
+
         <div class="card" id="infoCard">
           <div class="rc-head">
             <div class="rc-mark"><svg viewBox="0 0 32 32"><use href="#i-mark"/></svg></div>
@@ -1498,6 +1518,33 @@ html[data-theme="light"] .tpick-mask{background:rgba(30,34,56,.34)}
           <div class="ch"><svg class="i"><use href="#i-knob"/></svg><span>运行行为</span></div>
           <div class="cb" id="behaviorFields"></div>
         </div>
+        <!-- 控制台账号：管理员是在网页里创建的，也必须能在网页里改密码 ——
+             之前只有后端接口没有入口，用户建完账号就再也没法换密码了。 -->
+        <div class="card">
+          <div class="ch"><svg class="i"><use href="#i-lock"/></svg><span>控制台账号</span>
+            <span class="hint" id="acctUser"></span></div>
+          <div class="cb">
+            <div class="fieldrow">
+              <div class="t"><b>当前密码</b><span>忘了就删掉 data/auth.json 重启容器，重新创建</span></div>
+              <div class="ctl" style="width:260px">
+                <input class="inp" type="password" id="pwOld" autocomplete="current-password" placeholder="当前登录密码">
+              </div>
+            </div>
+            <div class="fieldrow">
+              <div class="t"><b>新密码</b><span>至少 8 位，需含字母、数字和特殊字符</span></div>
+              <div class="ctl" style="width:260px">
+                <input class="inp" type="password" id="pwNew" autocomplete="new-password" placeholder="新密码">
+              </div>
+            </div>
+            <div class="fieldrow">
+              <div class="t"><b>确认新密码</b><span>改完只有当前浏览器保持登录，其他设备会掉线</span></div>
+              <div class="ctl" style="width:260px;display:flex;gap:8px">
+                <input class="inp" type="password" id="pwNew2" autocomplete="new-password" placeholder="再输一次">
+                <button class="btn btn-primary" id="btnChangePw" style="flex:none">修改密码</button>
+              </div>
+            </div>
+          </div>
+        </div>
       </div>
 
       <!-- ================= 关于 ================= -->
@@ -1517,7 +1564,7 @@ html[data-theme="light"] .tpick-mask{background:rgba(30,34,56,.34)}
             </p>
             <div style="display:grid;gap:7px;font-size:12.5px;color:var(--text-3)">
               <div>· <b style="color:var(--text-2)">按设备维护</b> —— 白名单里选设备即放行，之后地址一变自动原地更新</div>
-              <div>· <b style="color:var(--text-2)">自动取址</b> —— 取路由器记录的最新地址；设备离线时自动跳过，不误删</div>
+              <div>· <b style="color:var(--text-2)">自动取址</b> —— 读本机网卡的当前全局 IPv6（报文真正能落地的地址），地址一变原地更新；设备离线时跳过，不误删</div>
               <div>· <b style="color:var(--text-2)">设备总览</b> —— 在线 / 离线 / 黑名单 / 儿童上网一屏看全，每个地址点一下即复制</div>
               <div>· <b style="color:var(--text-2)">快捷操作</b> —— 重启、重拨、功率模式、信道优化，点一下就能做</div>
               <div>· <b style="color:var(--text-2)">计划任务</b> —— 定时重启 / 重拨 / 功率模式 / 信道优化 / 定时唤醒</div>
@@ -1537,19 +1584,19 @@ html[data-theme="light"] .tpick-mask{background:rgba(30,34,56,.34)}
                 <span>HiRouterCenter 作者 · 项目完全开源，欢迎提 Issue 与 Pull Request</span>
               </div>
             </div>
-            <a class="lnk" href="https://github.com/aaron2024S/ipv6sync" target="_blank" rel="noopener">
+            <a class="lnk" href="https://github.com/aaron2024S/HiRouterCenter" target="_blank" rel="noopener">
               <svg class="i"><use href="#i-github"/></svg>
               <span>GitHub 项目主页</span>
-              <em class="u">github.com/aaron2024S/ipv6sync</em>
+              <em class="u">github.com/aaron2024S/HiRouterCenter</em>
               <svg class="i go"><use href="#i-out"/></svg>
             </a>
-            <a class="lnk" href="https://github.com/aaron2024S/ipv6sync/issues" target="_blank" rel="noopener">
+            <a class="lnk" href="https://github.com/aaron2024S/HiRouterCenter/issues" target="_blank" rel="noopener">
               <svg class="i"><use href="#i-issue"/></svg>
               <span>问题反馈 / 功能建议</span>
               <em class="u">issues</em>
               <svg class="i go"><use href="#i-out"/></svg>
             </a>
-            <a class="lnk" href="https://github.com/aaron2024S/ipv6sync/releases" target="_blank" rel="noopener">
+            <a class="lnk" href="https://github.com/aaron2024S/HiRouterCenter/releases" target="_blank" rel="noopener">
               <svg class="i"><use href="#i-tag"/></svg>
               <span>版本更新记录</span>
               <em class="u">releases</em>
@@ -1612,7 +1659,9 @@ function escHtml(s) {
   return String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;')
     .replace(/>/g, '&gt;');
 }
-function escAttr(s) { return escHtml(s).replace(/"/g, '&quot;'); }
+/* 属性值转义：除 HTML 四件套外，单引号也必须转 —— 目前所有属性都用双引号
+   包着，但只要以后有人写成 onclick='...'，不转单引号就是个注入口。 */
+function escAttr(s) { return escHtml(s).replace(/"/g, '&quot;').replace(/'/g, '&#39;'); }
 /* MAC 归一化比较键：规则存储的是 12 位无分隔小写 hex（后端 norm_mac），
    路由器 HostInfo 是 XX:XX:… 带冒号形式 —— 直接 toUpperCase 比较永远不相等
    （1.2.2 前「编辑规则定位不到设备 / 表格里显示不出设备名」就是这条）。 */
@@ -1685,15 +1734,18 @@ const S = {
    模式由服务端驱动：/api/session 里 setupDone=false → 创建管理员；
    否则 → 登录。两种模式共用同一个分屏界面，字段按模式增减。 */
 
-function showAuth(mode) {
+function showAuth(mode, broken) {
   S.authed = false;
   S.authMode = mode;
   const setup = mode === 'setup';
   $('#auth').hidden = false;
   $('#auEyebrow').innerHTML = setup ? '<span class="dot"></span>首次启动' : '<span class="dot"></span>安全登录';
   $('#auTtl').textContent = setup ? '创建管理员账户' : '登录控制台';
-  $('#auSub').textContent = setup ? '这台设备还没有管理员，先创建一个再继续'
-    : '用管理员账号继续，配置都保存在这台机器上';
+  /* 凭据文件损坏时会重新打开创建入口 —— 必须说清楚为什么，
+     否则用户会以为"我的密码和账号凭空没了"。 */
+  $('#auSub').textContent = broken ? '凭据文件已损坏（旧文件已备份），请重新创建管理员'
+    : (setup ? '这台设备还没有管理员，先创建一个再继续'
+      : '用管理员账号继续，配置都保存在这台机器上');
   $('#auF2').hidden = !setup;
   $('#auRememberRow').hidden = setup;
   $('#auBtnTxt').textContent = setup ? '创建账户' : '登录';
@@ -1824,10 +1876,15 @@ $('#auForm').addEventListener('submit', async e => {
   } finally { btn.disabled = false; txt.textContent = setup ? '创建账户' : '登录'; }
 });
 $('#btnLogout').addEventListener('click', async () => {
-  try { await api('/api/logout', {}); } catch (e) { /* 已掉线也算退出 */ }
-  S.authed = false;
+  const r = await api('/api/logout', {}).catch(() => null);
+  if (!r || !r.ok) {                 // 没退成功就别说"已退出"，否则用户以为走了
+    toast('退出失败，请重试', '会话可能已经失效，刷新一下页面即可', 'alert');
+    return;
+  }
   stopPolling();
-  showAuth('login');
+  /* 整页重载：设备名、内网地址、配置这些都在 DOM 里，只盖一层登录门不够——
+     共用浏览器时，下一个人按 F12 或退回即可看到上一任的页面。 */
+  location.reload();
 });
 
 /* ---------------- 设备类型 ---------------- */
@@ -1939,15 +1996,53 @@ async function refreshTraffic() {
     }
   } finally { _trafficBusy = false; }
 }
+/* 首页引导条：只在"还没配好"时出现，配好就彻底消失（不做常驻提示）。
+   两种情况：
+     · 没填路由器密码 —— 新用户首次登录看到的就是满屏「—」，必须给下一步；
+     · 密码连错已暂停 —— 后台已经停止自动重试（防锁死路由器账号），
+       用户得知道"现在为什么不动"，以及去哪个按钮恢复。 */
+function renderGuide() {
+  const box = $('#devGuide');
+  if (!box) return;
+  const ov = (S.state && S.state.overview) || {};
+  const st = (S.state && S.state.status) || {};
+  let txt = '', label = '去配置';
+  if (!ov.password_set) {
+    txt = '还没配置路由器连接：填好路由器地址和管理员密码，白名单才会开始同步。';
+  } else if (st.auth_paused) {
+    txt = '路由器密码连续输错，已暂停自动重试 —— 再试会把路由器账号锁死。核对密码后点「测试连接」即可恢复。';
+    label = '去核对';
+  } else {
+    box.hidden = true;
+    return;
+  }
+  $('#devGuideTxt').textContent = txt;
+  $('#devGuideBtn').textContent = label;
+  box.hidden = false;
+}
+$('#devGuideBtn').addEventListener('click', () => {
+  goPage('router');
+  const focus = !((S.state || {}).overview || {}).password_set ? $('#set-ROUTER_PASSWORD')
+    : $('#btnTest');
+  if (focus) setTimeout(() => focus.focus(), 120);
+});
+
 function renderInfo() {
   const box = $('#riName'), sub = $('#riSub'), badge = $('#riBadge'), grid = $('#riGrid');
   const info = (S.info && S.info.info) || {};
   const ok = !!(S.info && S.info.ok);
-  box.textContent = info.product || (ok ? '路由器' : '读不到路由器信息');
+  const ov = (S.state && S.state.overview) || {};
+  const paused = !!((S.state && S.state.status) || {}).auth_paused;
+  box.textContent = info.product || (ok ? '路由器'
+    : (!ov.password_set ? '路由器（待配置）' : '读不到路由器信息'));
   // 副标题只放管理地址；内部主板代号与硬件版本一律不进界面（含悬浮提示）
-  sub.textContent = (S.state && S.state.overview && S.state.overview.router_host) || '';
-  badge.className = 'badge ' + (ok ? 'badge-run' : 'badge-err');
-  badge.innerHTML = '<span class="dot"></span>' + (ok ? '在线' : '未连接');
+  sub.textContent = ov.router_host || '';
+  /* 徽标三态：没配密码 → 中性「未配置」（这不是故障，别拿红色吓人）；
+     密码连错已暂停 → 黄色「已暂停」；其余照旧。 */
+  const badgeCls = ok ? 'badge-run' : (paused ? 'badge-warn' : (!ov.password_set ? 'badge-plain' : 'badge-err'));
+  badge.className = 'badge ' + badgeCls;
+  badge.innerHTML = '<span class="dot"></span>'
+    + (ok ? '在线' : (paused ? '已暂停' : (!ov.password_set ? '未配置' : '未连接')));
 
   const st = (S.state && S.state.status) || {};
   const ssid = info.ssid || {};
@@ -3849,6 +3944,8 @@ function renderSettings() {
   if (!st) return;
   const ov = st.overview || {};
   $('#routerSub').textContent = [ov.router_host, ov.router_user].filter(Boolean).join(' · ');
+  const acct = $('#acctUser');
+  if (acct) acct.textContent = st.user ? ('当前账号 ' + st.user) : '';
   const groups = st.settings || [];
   $('#routerFields').innerHTML = '';
   $('#behaviorFields').innerHTML = '';
@@ -3911,6 +4008,22 @@ $('#btnSaveSettings').addEventListener('click', async () => {
   renderSettings();
   toast('设置已保存', (r.notes || []).join('；') || '立即生效', 'check');
   refreshState();
+});
+/* 改控制台密码：后端要求已登录 + 同源 + json，这里只负责把话问清楚。
+   成功后只有当前会话保留（其他设备被踢下线），所以给一句明确提示。 */
+$('#btnChangePw').addEventListener('click', async () => {
+  const oldPw = $('#pwOld').value, newPw = $('#pwNew').value, again = $('#pwNew2').value;
+  if (!oldPw) return toast('请先填当前密码', '', 'alert');
+  if (newPw.length < 8) return toast('新密码至少 8 位', '建议字母 + 数字 + 特殊字符', 'alert');
+  if (newPw !== again) return toast('两次输入的新密码不一致', '', 'alert');
+  if (newPw === oldPw) return toast('新密码不能和当前密码相同', '', 'alert');
+  const btn = $('#btnChangePw');
+  btn.disabled = true;
+  const r = await api('/api/password', { old: oldPw, new: newPw }).catch(() => null);
+  btn.disabled = false;
+  if (!r || !r.ok) return errToast(r);
+  $('#pwOld').value = ''; $('#pwNew').value = ''; $('#pwNew2').value = '';
+  toast('密码已修改', '其他设备上的登录已失效，需要重新登录', 'check');
 });
 $('#btnTest').addEventListener('click', async () => {
   const btn = $('#btnTest');
@@ -3995,10 +4108,11 @@ const PAGE_LOAD = {
   router: async () => { await loadInfo(); await loadSettings(); },
   about: async () => { renderAbout(); },
 };
-$$('.ni[data-page]').forEach(b => b.addEventListener('click', () => {
+function goPage(p) {
+  const b = document.querySelector('.ni[data-page="' + p + '"]');
+  if (!b) return;
   $$('.ni[data-page]').forEach(x => x.removeAttribute('aria-current'));
   b.setAttribute('aria-current', 'true');
-  const p = b.dataset.page;
   S.page = p;
   $$('.page').forEach(x => x.classList.add('hide'));
   document.getElementById('p-' + p).classList.remove('hide');
@@ -4007,7 +4121,8 @@ $$('.ni[data-page]').forEach(b => b.addEventListener('click', () => {
   if (window.closeNav) window.closeNav();
   const fn = PAGE_LOAD[p];
   if (fn) Promise.resolve(fn()).catch(() => {});
-}));
+}
+$$('.ni[data-page]').forEach(b => b.addEventListener('click', () => goPage(b.dataset.page)));
 /* 主题三态：跟随系统 → 深色 → 浅色 → 跟随系统，选择记忆在浏览器本地。
    「跟随系统」时按 prefers-color-scheme 落到具体的深色/浅色，
    并且系统自己改了深浅也会跟着变（不用刷新）。 */
@@ -4104,6 +4219,7 @@ async function refreshState() {
   if (!st) return;
   S.state = st;
   renderCounts();
+  renderGuide();
   if (S.page === 'devices') renderInfo();
   if (S.page === 'firewall') renderFwKv();
   if (S.page === 'router') renderConnBadge();   // 只刷徽标，表单字段不动
@@ -4142,8 +4258,9 @@ async function boot() {
       startPolling();
     } else {
       /* 模式由服务端定：还没创建管理员 → 创建页；否则 → 登录页。
-         理论上不该出现「已初始化还开创建页」—— 服务端 403 兜底。 */
-      showAuth(s && s.setupDone === false ? 'setup' : 'login');
+         理论上不该出现「已初始化还开创建页」—— 服务端 403 兜底。
+         凭据文件损坏时 setupDone=false 且 broken=true，创建页要带上说明。 */
+      showAuth(s && s.setupDone === false ? 'setup' : 'login', !!(s && s.broken));
     }
   } catch (e) { showAuth('login'); }
 })();

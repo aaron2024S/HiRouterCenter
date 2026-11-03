@@ -240,6 +240,27 @@ def _migrate_legacy_rules(data: dict) -> dict:
     return data
 
 
+def _reject_metadata_url(url: str) -> None:
+    """拒绝云厂商元数据地址（169.254.169.254 / metadata.* 之类）。
+
+    通知地址是管理员填的，正常只会填 ntfy.sh 或自家局域网，但"能填"就等于
+    "服务端会去请求"——填个元数据地址就可能把实例凭据读进推送内容里。
+    只拦这一类，不拦内网 IP（自建 ntfy 就在局域网里，拦了没法用）。
+    """
+    import urllib.parse
+    host = (urllib.parse.urlparse(url).hostname or "").strip().lower()
+    if not host:
+        return
+    if host in ("metadata.google.internal", "metadata", "instance-data"):
+        raise SettingsError("通知服务器地址不能指向云厂商的元数据服务")
+    try:
+        ip = ipaddress.ip_address(host)
+    except ValueError:
+        return
+    if ip.is_link_local:            # 169.254.0.0/16、fe80::/10
+        raise SettingsError("通知服务器地址不能是链路本地地址（169.254.x.x）")
+
+
 def coerce(f: Field, raw):
     """把网页/文件里来的值转成规范形式；不合法抛 SettingsError。"""
     if raw is None:
@@ -361,6 +382,10 @@ def validate_overlay(data: dict, strict: bool = True) -> dict:
                     raise SettingsError(
                         f"{name} 服务器地址要以 http:// 或 https:// 开头，"
                         "如 https://ntfy.sh/mytopic")
+                # 自建 ntfy 在局域网里是正常用法，所以不拦内网地址；
+                # 只拦云厂商的元数据地址 —— 那类地址一旦被填进来，
+                # 服务端就会替人把实例凭据读出来（SSRF 最低成本的入口）。
+                _reject_metadata_url(str(cv))
             if f.key == "NOTIFY_QUIET":
                 from . import notify_events as _ne
                 try:

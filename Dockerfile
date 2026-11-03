@@ -1,9 +1,15 @@
 # 纯标准库实现，不需要任何 pip 依赖 —— 镜像因此可以非常小、构建也不需要联网装包
 FROM python:3.12-alpine
 
+# 版本号不写死在 Dockerfile 里：CI 把镜像 tag 作为 build-arg 传进来
+# （本地 docker build 不带参数时标签是 "local"）。曾经的写法是直接把
+# "1.2.8" 写进 LABEL，结果 1.2.9 / 1.3.0 两次发版都漏改，docker inspect
+# 看到的版本永远落后 —— 少一个手工同步点就少一个出错的地方。
+ARG APP_VERSION=local
+
 LABEL org.opencontainers.image.title="HiRouterCenter" \
       org.opencontainers.image.description="华为路由器控制中心：IPv6 防火墙同步、设备管理与计划任务，含通知推送" \
-      org.opencontainers.image.version="1.2.8"
+      org.opencontainers.image.version="${APP_VERSION}"
 
 ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
@@ -31,7 +37,7 @@ RUN chown -R syncapp:syncapp /app
 USER syncapp
 
 VOLUME ["/data"]
-# 6600 = 浏览器控制台（未设 ADMIN_PASSWORD 时不监听）。
+# 6600 = 浏览器控制台（PORT>0 就监听；PORT=0 才关）。
 # 健康检查/状态（8099）只绑 127.0.0.1（见 HEALTH_HOST），只有容器自己和宿主机
 # 本机能访问 —— 不是对外服务，所以**不 EXPOSE**，免得 NAS 面板把它当成可发布端口。
 EXPOSE 6600

@@ -28,6 +28,7 @@ import ipaddress
 import json
 import logging
 import os
+import tempfile
 import re
 import threading
 import time
@@ -590,13 +591,24 @@ class Tasks:
         d = os.path.dirname(self.path)
         if d:
             os.makedirs(d, exist_ok=True)
-        tmp = self.path + ".tmp"
-        with open(tmp, "w", encoding="utf-8") as f:
-            json.dump({"tasks": self._items, "quiet_until": self._quiet_until},
-                      f, ensure_ascii=False, indent=1)
-            f.flush()
-            os.fsync(f.fileno())          # 掉电也不丢：先落盘，再发送
-        os.replace(tmp, self.path)
+        # 与 auth/settings/state 一致：临时文件用 mkstemp（固定名 .tmp 会被
+        # 同目录的其他写入撞上），文件权限 0600（计划任务里可能带设备名、
+        # cron 时间这些家里作息信息，没必要让同机其他用户读）。
+        fd, tmp = tempfile.mkstemp(dir=d or ".", prefix=".tasks-", suffix=".tmp")
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8") as f:
+                json.dump({"tasks": self._items, "quiet_until": self._quiet_until},
+                          f, ensure_ascii=False, indent=1)
+                f.flush()
+                os.fsync(f.fileno())      # 掉电也不丢：先落盘，再发送
+            os.chmod(tmp, 0o600)
+            os.replace(tmp, self.path)
+        except BaseException:
+            try:
+                os.unlink(tmp)
+            except OSError:
+                pass
+            raise
 
     def save(self):
         with self._lock:

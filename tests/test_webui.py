@@ -492,10 +492,21 @@ class LoginBackoffTest(EnvSandbox):
     def make(self):
         router = self.DeadRouter()
         cfg = Config(host="192.168.3.1", username="admin", password="x",
-                     session_file=None, rules=[Rule(name="NAS")])
+                     session_file=None, state_file=self._state_file(),
+                     rules=[Rule(name="NAS")])
         return Syncer(cfg, router), router
 
-    def test_backoff_grows_and_blocks_repeat_attempts(self):
+    def _state_file(self):
+        if not hasattr(self, "_tmpdir"):
+            self._tmpdir = tempfile.mkdtemp()
+        return os.path.join(self._tmpdir, "state.json")
+
+    def test_backoff_then_stop_before_locking_the_router_account(self):
+        """第 1 次失败先退避；第 2 次直接停手。
+
+        固件 maxfailtimes=3，第 3 次错就会把**路由器账号**锁死（要重启路由器）。
+        自动重试绝不能走到那一步 —— 用户的密码可能只是打错一个字。
+        """
         syncer, router = self.make()
         self.assertFalse(syncer.ensure_login())
         self.assertEqual(router.attempts, 1)
@@ -504,41 +515,71 @@ class LoginBackoffTest(EnvSandbox):
         for _ in range(5):
             syncer.ensure_login()
         self.assertEqual(router.attempts, 1, "退避期内不应重试登录")
-        # 第一次的退避时长就是配置的基数
         self.assertLessEqual(syncer.login_backoff_remaining(),
                              syncer.cfg.login_backoff_base)
 
-    def test_backoff_doubles(self):
+        syncer.next_login_at = 0.0          # 假装等到点了 → 第二次尝试
+        self.assertFalse(syncer.ensure_login())
+        self.assertEqual(router.attempts, 2)
+        self.assertTrue(syncer.auth_paused(), "第 2 次失败后必须停手")
+
+        # 停手之后，不管过多久、调多少次都不再碰设备
+        syncer.next_login_at = 0.0
+        for _ in range(10):
+            self.assertFalse(syncer.ensure_login())
+        self.assertEqual(router.attempts, 2, "停手后一次都不许再试")
+
+    def test_auth_pause_survives_restart(self):
+        """暂停状态要落盘：重启就清零等于绕过停手保护。"""
         syncer, router = self.make()
         syncer.ensure_login()
-        first = syncer.login_backoff_remaining()
-        syncer.next_login_at = 0.0          # 假装等到点了
+        syncer.next_login_at = 0.0
         syncer.ensure_login()
-        second = syncer.login_backoff_remaining()
-        self.assertGreater(second, first * 1.8, "第二次退避应约为第一次的两倍")
-        self.assertEqual(router.attempts, 2)
+        self.assertTrue(syncer.auth_paused())
 
-    def test_node_explains_backoff_instead_of_vague_error(self):
+        syncer2, router2 = self.make()      # 同一 state 目录 = 同一个"容器"
+        self.assertTrue(syncer2.auth_paused(), "重启后仍应处于停手状态")
+        syncer2.next_login_at = 0.0
+        self.assertFalse(syncer2.ensure_login())
+        self.assertEqual(router2.attempts, 0, "重启不该重置成「可以随便试」")
+
+    def test_resume_login_after_user_confirms(self):
+        """用户点「测试连接」= 显式确认过密码，解除停手。"""
+        syncer, router = self.make()
+        syncer.ensure_login()
+        syncer.next_login_at = 0.0
+        syncer.ensure_login()
+        self.assertTrue(syncer.auth_paused())
+        syncer.resume_login()
+        self.assertFalse(syncer.auth_paused())
+        syncer.ensure_login()
+        self.assertEqual(router.attempts, 3, "解除后允许再试一次")
+
+    def test_node_explains_pause_instead_of_vague_error(self):
         router = self.DeadRouter()
         cfg = Config(host="192.168.3.1", username="admin", password="x",
-                     session_file=None, rules=[Rule(name="NAS")])
+                     session_file=None, state_file=self._state_file(),
+                     rules=[Rule(name="NAS")])
         node = Node.__new__(Node)           # 只测 _logged_in，不装配真实对象
         node.syncer = Syncer(cfg, router)
-        err = node._logged_in()
+        node.syncer.ensure_login()          # 第 1 次：退避
+        node.syncer.next_login_at = 0.0
+        err = node._logged_in()             # 第 2 次：停手
         self.assertIsNotNone(err)
-        self.assertIn("退避", err)
-        self.assertIn("秒", err)
+        self.assertIn("测试连接", err)
+        self.assertIn("锁死", err)
 
     def test_whitelist_reports_backoff_without_touching_router(self):
         router = self.DeadRouter()
         cfg = Config(host="192.168.3.1", username="admin", password="x",
-                     session_file=None, rules=[Rule(name="NAS")])
+                     session_file=None, state_file=self._state_file(),
+                     rules=[Rule(name="NAS")])
         node = Node.__new__(Node)
         node.syncer = Syncer(cfg, router)
         for _ in range(3):
             res = node.whitelist()
             self.assertFalse(res["ok"])
-            self.assertIn("退避", res["error"])
+            self.assertTrue("退避" in res["error"] or "暂停" in res["error"])
         self.assertEqual(router.attempts, 1, "点多次也只应该试一次登录")
 
     def test_whitelist_seeds_firewall_state_for_console_header(self):
@@ -1003,13 +1044,17 @@ class WebUILoginThrottleTest(unittest.TestCase):
             w = self.ui._throttled(ip)
         self.assertLessEqual(w, 6 * 3600 + 1, "锁定时长不应超过 LOCK_MAX")
 
-    def test_global_circuit_breaker_blocks_new_ip(self):
-        # 60 次失败分摊到 60 个"不同 IP"，单个 IP 都没超限
+    def test_global_pressure_slows_down_but_never_locks_out(self):
+        """全局失败量高时只降速，不整体拒登。
+
+        早期版本这里是"全局熔断一个窗口"——攻击者换 60 个源地址故意失败，
+        就能把合法管理员一起关在门外，等于送了个 DoS 工具。
+        """
         for i in range(60):
             self.ui._note_fail(f"10.1.0.{i}")
-        w = self.ui._throttled("10.2.3.4")     # 全新的、零失败的 IP
-        self.assertTrue(299 <= w <= 300,
-                        f"全局熔断应拦住新 IP 约 300 秒，实际 {w}")
+        self.assertEqual(self.ui._throttled("10.2.3.4"), 0.0,
+                         "全新来源不该被全局拒登")
+        self.assertTrue(self.ui._global_pressure(), "但应进入全局降速状态")
 
     def test_successful_login_resets_strikes(self):
         ip = "10.9.9.9"

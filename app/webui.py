@@ -10,16 +10,22 @@ Web 控制台
 安全上的取舍（都是有意的，不是漏的）：
   · 控制台端口只要 PORT>0 就启动；还没创建管理员时只开放「创建管理员」两个
     路由，创建成功后该入口永久关闭（403）。「重置」= 删 auth.json 重启容器。
-  · 口令存 scrypt 哈希（app/auth.py），登录比较走 hmac.compare_digest（常量时间），
-    用户名和密码都走同一条比较路径，不让人从响应快慢里猜出"用户名对不对"。
-  · 登录防爆破，三层：单 IP 5 分钟窗口内错 8 次即锁定 → 反复触发锁定时间逐次翻倍
-    （5 分钟起步，上限 6 小时）；所有来源合计错 60 次则全局熔断一个窗口（防换 IP 分摊）；
-    每次登录校验前恒定延时 0.25 秒（拉平响应时间、拖慢脚本）。锁定期间密码对也不放行，
-    登录成功即清零。
+  · 口令存 scrypt 哈希（app/auth.py）。**用户名不对也照跑一次 scrypt**，
+    两条路径耗时同量级，不让人从响应快慢里猜出"用户名对不对"。
+  · **所有改状态的 POST 一律先过同源 + application/json 校验**，创建管理员、
+    登录、改密、登出一个不例外（2026-11-03 审查前这几个路由排在鉴权之前，
+    未登录就能爆破改密、跨站能抢注管理员）。
+  · 登录防爆破，三层：单 IP（IPv6 按 /64 聚合成一个来源）5 分钟窗口内错 8 次即锁定
+    → 反复触发锁定时间逐次翻倍（5 分钟起步，上限 6 小时）；所有来源合计错 60 次
+    则进入"全局限速"（每次校验再多等 2 秒，**不整体拒登** —— 拒登会让攻击者
+    用几十个源地址把管理员一起关在门外）；每次登录校验前恒定延时 0.25 秒
+    （拉平响应时间、拖慢脚本）。锁定期间密码对也不放行，登录成功即清零。
   · 会话令牌只放内存（重启即失效），Cookie 带 HttpOnly + SameSite=Lax；
     勾选「保持登录(7天)」时令牌与 Cookie 均按 7 天有效期签发。改密码后其他会话作废。
   · 改状态的请求要求 Content-Type 为 application/json 且 Origin（若有）与 Host 一致
-    —— 跨站的 form 表单发不出 application/json，配合 SameSite 足够挡掉 CSRF。
+    —— 跨站的 form 表单发不出 application/json（要发就得先过预检，而本服务不响应
+    预检），配合 SameSite 足够挡掉 CSRF。需要更严格的来源校验时，用
+    WEB_ALLOWED_HOSTS 显式列出允许的 Host（默认接受任意 Host，见 README）。
   · 不监听 0.0.0.0 之外的地址也做不到（容器里必须），所以文档里写明：
     这是**局域网内**的管理后台，别做端口映射到公网。
   · 只走 HTTP 不上 TLS：局域网自签证书更麻烦，且真正敏感的是"谁能访问到这个端口"。
@@ -28,6 +34,7 @@ from __future__ import annotations
 
 import hmac
 import http.server
+import ipaddress
 import json
 import logging
 import os
@@ -38,6 +45,8 @@ import time
 import urllib.parse
 
 from . import settings as st
+from .auth import WrongPassword as _WrongPassword
+from .node import Busy
 from .webpage import PAGE
 
 log = logging.getLogger("ipv6sync.webui")
@@ -46,11 +55,34 @@ log = logging.getLogger("ipv6sync.webui")
 FAIL_WINDOW = 300.0
 FAIL_LIMIT = 8
 GLOBAL_FAIL_LIMIT = 60   # 同窗口内全部来源的失败总上限（防换 IP 分摊的分布式猜解）
-LOCK_MAX = 6 * 3600      # 单 IP 递进锁定的时长上限（5min → 10min → …）
+LOCK_MAX = 6 * 3600      # 单个来源递进锁定的时长上限（5min → 10min → …）
+SLOW_DELAY = 2.0         # 全局压力下的额外延时（不整体拒登，避免误伤管理员）
+LOGIN_DELAY = 0.25       # 每次校验前的恒定延时
+MAX_BODY = 1 << 20       # 请求体上限（1MB）
+MAX_WORKERS = 64         # 并发连接上限
 
 CSP = ("default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; "
        "connect-src 'self'; img-src 'self' data:; form-action 'none'; "
        "frame-ancestors 'none'; base-uri 'none'")
+
+
+def _rate_key(ip: str) -> str:
+    """限速记账键：IPv6 按 /64 前缀聚合。
+
+    本应用的主场景就是 IPv6，而运营商给用户的是整个 /64 —— 一个 /64 里
+    换源地址是零成本的，按单个地址记账等于没有限速。IPv4 原样返回。
+    """
+    try:
+        a = ipaddress.ip_address((ip or "").split("%")[0])
+    except ValueError:
+        return ip or "?"
+    if a.version == 6:
+        return str(ipaddress.ip_network(f"{a}/64", strict=False))
+    return str(a)
+
+
+def _ctype(handler) -> str:
+    return (handler.headers.get("Content-Type") or "").split(";")[0].strip().lower()
 
 
 class WebUI:
@@ -62,7 +94,7 @@ class WebUI:
     """
 
     def __init__(self, node, host: str, port: int, auth_file: str,
-                 session_ttl: int = 12 * 3600):
+                 session_ttl: int = 12 * 3600, allowed_hosts=()):
         from .auth import AuthStore
         self.node = node
         self.host = host
@@ -70,12 +102,17 @@ class WebUI:
         self.auth = AuthStore(auth_file)
         self.session_ttl = max(300, int(session_ttl))
         self.REMEMBER_TTL = max(self.session_ttl, 7 * 24 * 3600)  # 保持登录：7 天
+        # 允许的 Host（小写，可含端口）。空 = 不限制（默认，兼容"用 IP 直连"
+        # 的常规用法与反代/域名访问）；配了之后就只认名单里的来源，
+        # 是挡住 DNS rebinding 的唯一可靠手段。
+        self.allowed_hosts = tuple(h.strip().lower()
+                                   for h in (allowed_hosts or ()) if h.strip())
 
         self._tokens: dict[str, tuple[str, float]] = {}   # token -> (user, 过期时间)
-        self._fails: dict[str, list[float]] = {}          # ip -> [失败时刻]
-        self._global_fails: list[float] = []              # 所有来源的失败时刻（全局熔断用）
-        self._locked_until: dict[str, float] = {}         # ip -> 锁定截止时刻
-        self._strikes: dict[str, int] = {}                # ip -> 被锁次数（决定下次锁多久）
+        self._fails: dict[str, list[float]] = {}          # 来源键 -> [失败时刻]
+        self._global_fails: list[float] = []              # 所有来源的失败时刻（全局压力用）
+        self._locked_until: dict[str, float] = {}         # 来源键 -> 锁定截止时刻
+        self._strikes: dict[str, int] = {}                # 来源键 -> 被锁次数（决定下次锁多久）
         self._lock = threading.Lock()
         self._server: http.server.ThreadingHTTPServer | None = None
 
@@ -85,7 +122,13 @@ class WebUI:
         return self.port > 0
 
     def setup_done(self) -> bool:
-        return self.auth.exists()
+        """已经创建过管理员，且凭据文件能读出内容。
+
+        只看「文件在不在」会让半截损坏的 auth.json 把控制台永久锁死
+        （入口关着、登录永远失败、用户只看到"密码不对"）。损坏时返回
+        False，让初始化入口重新开放，由 AuthStore 负责备份旧文件。
+        """
+        return self.auth.exists() and not self.auth.broken()
 
     def _check_credentials(self, user: str, password: str) -> bool:
         return self.auth.verify(user, password)
@@ -93,7 +136,10 @@ class WebUI:
     def _new_token(self, user: str, ttl: int | None = None) -> str:
         tok = secrets.token_urlsafe(32)
         with self._lock:
-            self._tokens[tok] = (user, time.time() + (ttl or self.session_ttl))
+            now = time.time()
+            if len(self._tokens) > 32:
+                self._sweep_tokens(now)
+            self._tokens[tok] = (user, now + (ttl or self.session_ttl))
         return tok
 
     def _valid(self, tok: str | None) -> str | None:
@@ -118,56 +164,111 @@ class WebUI:
         """返回还需等待的秒数（0 = 可以尝试登录）。
 
         三层防线：
-        · 单 IP 窗口：FAIL_WINDOW 秒内失败 FAIL_LIMIT 次 → 锁定该 IP；
+        · 单来源窗口：FAIL_WINDOW 秒内失败 FAIL_LIMIT 次 → 锁定该来源。
+          **IPv6 按 /64 聚合**（见 _rate_key）—— 否则换源地址就等于换人；
         · 递进锁定：被锁的次数越多锁得越久（5 分钟 → 10 分钟 → …，上限 LOCK_MAX），
           让在线爆破在时间上不划算；
-        · 全局熔断：所有来源加起来的失败总数达到 GLOBAL_FAIL_LIMIT →
-          整体拒登一个窗口，堵"换一堆 IP 分摊失败次数"的路子。
+        · 全局压力：所有来源加起来的失败总数达到 GLOBAL_FAIL_LIMIT 时**不拒登**，
+          只是每次校验再多等 SLOW_DELAY 秒。早期版本这里整体拒登一个窗口，
+          结果是攻击者用几十个源地址故意失败就能把管理员一起关在门外。
         锁定期间**密码对了也不放行**；登录成功即全部清零。
         """
         now = time.time()
+        key = _rate_key(ip)
         with self._lock:
-            until = self._locked_until.get(ip, 0.0)
+            self._gc(now)
+            until = self._locked_until.get(key, 0.0)
             if until > now:
                 return until - now
             if until:
                 # 刚出狱：窗口清零重新计数（strikes 保留，下次锁更久）
-                self._locked_until.pop(ip, None)
-                self._fails.pop(ip, None)
+                self._locked_until.pop(key, None)
+                self._fails.pop(key, None)
 
-            hist = [t for t in self._fails.get(ip, []) if now - t < FAIL_WINDOW]
-            self._fails[ip] = hist
+            hist = [t for t in self._fails.get(key, []) if now - t < FAIL_WINDOW]
+            self._fails[key] = hist
             if len(hist) >= FAIL_LIMIT:
-                strikes = self._strikes.get(ip, 0) + 1
-                self._strikes[ip] = strikes
+                strikes = self._strikes.get(key, 0) + 1
+                self._strikes[key] = strikes
                 lock = min(FAIL_WINDOW * (2 ** (strikes - 1)), LOCK_MAX)
-                self._locked_until[ip] = now + lock
+                self._locked_until[key] = now + lock
                 log.warning("登录防爆破：%s 在 %.0f 秒内失败 %d 次，"
                             "锁定 %.0f 秒（第 %d 次触发）",
                             ip, FAIL_WINDOW, len(hist), lock, strikes)
                 return lock
-
-            g = [t for t in self._global_fails if now - t < FAIL_WINDOW]
-            self._global_fails = g
-            if len(g) >= GLOBAL_FAIL_LIMIT:
-                log.warning("登录防爆破：全部来源在 %.0f 秒内累计失败 %d 次，"
-                            "全局熔断一个窗口", FAIL_WINDOW, len(g))
-                return FAIL_WINDOW    # 不透露具体解锁时刻，也不区分来源
         return 0.0
+
+    def _global_pressure(self) -> bool:
+        """全局失败量是否已到需要额外降速的程度（不拒登，只拖慢）。"""
+        now = time.time()
+        with self._lock:
+            self._global_fails = [t for t in self._global_fails
+                                  if now - t < FAIL_WINDOW]
+            return len(self._global_fails) >= GLOBAL_FAIL_LIMIT
+
+    def _gc(self, now: float) -> None:
+        """清理过期记账（调用方必须已持 self._lock）。
+
+        _fails / _strikes 早期只增不减 —— 换源地址的人能把它们撑成内存泄漏。
+        """
+        for key in [k for k, v in self._fails.items()
+                    if not v or now - v[-1] > FAIL_WINDOW * 2]:
+            self._fails.pop(key, None)
+        for key in [k for k, t in self._locked_until.items() if t <= now]:
+            # 锁到期（出狱）：窗口一并清零，strikes 留着决定下次锁多久
+            self._locked_until.pop(key, None)
+            self._fails.pop(key, None)
+        # strikes 记的是"这个人以前被锁过几次"，保留一段就够，别永久攒
+        if len(self._strikes) > 4096:
+            for key in list(self._strikes)[:2048]:
+                if key not in self._locked_until:
+                    self._strikes.pop(key, None)
+        if len(self._tokens) > 32:
+            self._sweep_tokens(now)
+
+    def _sweep_tokens(self, now: float | None = None) -> None:
+        """清掉过期会话（调用方必须已持 self._lock）。"""
+        now = now if now is not None else time.time()
+        for tok in [t for t, (_, exp) in self._tokens.items() if exp <= now]:
+            self._tokens.pop(tok, None)
 
     def _note_fail(self, ip: str):
         now = time.time()
         with self._lock:
-            self._fails.setdefault(ip, []).append(now)
+            self._fails.setdefault(_rate_key(ip), []).append(now)
             self._global_fails.append(now)
 
     def _clear_fails(self, ip: str):
+        key = _rate_key(ip)
         with self._lock:
-            self._fails.pop(ip, None)
-            self._locked_until.pop(ip, None)
-            self._strikes.pop(ip, None)
+            self._fails.pop(key, None)
+            self._locked_until.pop(key, None)
+            self._strikes.pop(key, None)
 
     # ---------------- 路由 ----------------
+
+    def _reject_bad_post(self, handler) -> bool:
+        """改状态请求的两道门：同源 + application/json。
+
+        返回 True 表示已经回包（请求被拒），调用方直接 return。
+        只收 application/json 是有意的：跨站 form 发不出这个类型，
+        fetch 想发就得先过 CORS 预检，而本服务不响应预检。
+        """
+        if not handler.same_origin():
+            handler.send_json(
+                {"ok": False, "error": "跨站请求被拒绝（来源与本机地址不一致）"}, 403)
+            return True
+        if _ctype(handler) != "application/json":
+            handler.send_json({"ok": False, "error": "只接受 application/json"}, 415)
+            return True
+        return False
+
+    def _cookie(self, tok: str, max_age: int, secure: bool = False) -> str:
+        parts = [f"ipv6sync_web={tok}", "Path=/", "HttpOnly", "SameSite=Lax",
+                 f"Max-Age={max_age}"]
+        if secure:
+            parts.append("Secure")
+        return "; ".join(parts)
 
     def handle(self, handler: "Handler", method: str, path: str, body: bytes):
         q = urllib.parse.urlparse(path)
@@ -186,34 +287,37 @@ class WebUI:
 
         # ---- 初始化：只在「还没有管理员」时开放，创建成功后永久关闭 ----
         if method == "GET" and route == "/api/setup-status":
+            # 不回显用户名：未认证就能拿到管理员名，等于把用户名爆破的一半白送
             return handler.send_json({"setupDone": self.setup_done(),
-                                      "username": self.auth.username(),
+                                      "broken": self.auth.broken(),
                                       "version": _version()})
 
-        if method == "POST" and route == "/api/setup":
-            return self._setup(handler, body, ip)
-
-        if method == "POST" and route == "/api/login":
-            return self._login(handler, body, ip)
+        # ---- 登录前的三个动作：先过来源与类型校验，再谈业务 ----
+        # 顺序很关键：这几条排在鉴权之前（本来也没法鉴权），所以必须自己
+        # 把关，否则跨站页面能直接抢注管理员、未登录就能爆破改密。
+        if method == "POST" and route in ("/api/setup", "/api/login", "/api/logout"):
+            if self._reject_bad_post(handler):
+                return
+            if route == "/api/setup":
+                return self._setup(handler, body, ip)
+            if route == "/api/login":
+                return self._login(handler, body, ip)
+            self._drop(handler.cookie("ipv6sync_web"))
+            handler.send_json({"ok": True}, extra_headers=[
+                ("Set-Cookie", self._cookie("", 0))])
+            return
 
         token = handler.cookie("ipv6sync_web")
         user = self._valid(token)
 
-        if method == "POST" and route == "/api/logout":
-            self._drop(token)
-            handler.send_json({"ok": True}, extra_headers=[
-                ("Set-Cookie", "ipv6sync_web=; Path=/; Max-Age=0; HttpOnly; SameSite=Lax")])
-            return
-
         if method == "GET" and route == "/api/session":
             # version 一并返回：登录页页脚要显示「HiRouterCenter x.y.z」，
-            # 而 boot()（里面才拉 /api/version）要等登录后才跑
+            # 而 boot()（里面才拉 /api/version）要等登录后才跑。
+            # broken = 凭据文件损坏、入口已重新打开，前端要如实告诉用户。
             return handler.send_json({"authed": bool(user), "user": user or "",
                                       "setupDone": self.setup_done(),
+                                      "broken": self.auth.broken(),
                                       "version": _version()})
-
-        if method == "POST" and route == "/api/password":
-            return self._change_password(handler, body, user, token)
 
         if not user:
             # 未登录：状态类接口温和地回 authed=false，动作类接口直接 401
@@ -229,15 +333,25 @@ class WebUI:
                 "status": self.node.snapshot(),
             })
 
-        # ---- 以下都是改状态的动作，要求同源 ----
-        if method == "POST" and not handler.same_origin():
-            return handler.send_json(
-                {"ok": False, "error": "跨站请求被拒绝（Origin 与 Host 不一致）"}, 403)
+        # ---- 以下都是改状态的动作，要求同源 + application/json ----
+        if method == "POST" and self._reject_bad_post(handler):
+            return
 
-        ctype = (handler.headers.get("Content-Type") or "").split(";")[0].strip()
-        if method == "POST" and ctype not in ("application/json", "text/plain", ""):
-            return handler.send_json(
-                {"ok": False, "error": "只接受 application/json"}, 415)
+        # 改密：必须已登录（上面刚拦过）+ 走同一套限速。
+        # 位置很关键 —— 早期版本这条排在 `if not user` 之前，且内部只看 old，
+        # 于是未登录就能无限次猜旧密码，猜中即改密接管（2026-11-03 审查 H-1）。
+        if method == "POST" and route == "/api/password":
+            wait = self._throttled(ip)
+            if wait > 0:
+                return handler.send_json(
+                    {"ok": False,
+                     "error": f"尝试过于频繁，请 {int(wait) + 1} 秒后再试"}, 429)
+            res = self._change_password(handler, body, user, token)
+            if res is False:          # 旧密码不对：计入同一个失败账本
+                self._note_fail(ip)
+                return handler.send_json(
+                    {"ok": False, "error": "当前密码不正确"}, 400)
+            return
 
         try:
             if method == "POST" and route == "/api/settings":
@@ -350,6 +464,11 @@ class WebUI:
                 return handler.send_json(self.node.task_run(_json_body(body)))
         except st.SettingsError as e:
             return handler.send_json({"ok": False, "error": str(e)}, 400)
+        except Busy:
+            # 同步正跑着（一轮可能几十秒）。回 409 让前端提示"稍后再点"，
+            # 比让请求挂到浏览器超时好得多。
+            return handler.send_json(
+                {"ok": False, "error": "正在同步，请过几秒再试"}, 409)
         except Exception:  # noqa: BLE001
             # 异常类名与原始错误只进日志 —— 界面上不出现任何内部参数
             log.exception("控制台接口 %s 出错", route)
@@ -370,7 +489,13 @@ class WebUI:
         except ValueError as e:
             return handler.send_json({"ok": False, "error": str(e)}, 400)
 
-        time.sleep(0.25)   # 恒定延时：拉平正确/错误口令的响应时间，也拖慢脚本化尝试
+        # 恒定延时：拉平正确/错误口令的响应时间，也拖慢脚本化尝试。
+        # 全局失败量偏高时再多等一会儿 —— 只降速、不拒登。
+        delay = LOGIN_DELAY
+        if self._global_pressure():
+            delay += SLOW_DELAY
+        time.sleep(delay)
+
         user = self.auth.username()
         if self._check_credentials(str(data.get("user", "")),
                                    str(data.get("password", ""))):
@@ -382,15 +507,18 @@ class WebUI:
             return handler.send_json(
                 {"ok": True, "user": user},
                 extra_headers=[("Set-Cookie",
-                                f"ipv6sync_web={tok}; Path=/; HttpOnly; SameSite=Lax; "
-                                f"Max-Age={ttl}")])
+                                self._cookie(tok, ttl, handler.forwarded_https()))])
 
         self._note_fail(ip)
         log.warning("控制台登录失败，来源 %s", ip)
         return handler.send_json({"ok": False, "error": "用户名或密码不对"}, 401)
 
     def _setup(self, handler, body: bytes, ip: str):
-        """首次创建管理员。只允许一次：auth.json 存在后这里永远 403。"""
+        """首次创建管理员。只允许一次：auth.json 存在后这里永远 403。
+
+        凭据文件损坏时（半截 JSON / 空文件）允许重建 —— 否则控制台会永久
+        锁死：入口关着、登录又永远失败，用户只看到"密码不对"。
+        """
         if self.setup_done():
             return handler.send_json(
                 {"ok": False, "error": "管理员已创建，请直接登录"}, 403)
@@ -414,13 +542,17 @@ class WebUI:
         return handler.send_json(
             {"ok": True, "user": rec["username"]},
             extra_headers=[("Set-Cookie",
-                            f"ipv6sync_web={tok}; Path=/; HttpOnly; SameSite=Lax; "
-                            f"Max-Age={self.session_ttl}")])
+                            self._cookie(tok, self.session_ttl,
+                                         handler.forwarded_https()))])
 
     # ---------------- 启动 ----------------
 
     def _change_password(self, handler, body: bytes, user: str, token: str):
-        """已登录改密。成功后作废**其他**会话（当前浏览器不掉线）。"""
+        """已登录改密。成功后作废**其他**会话（当前浏览器不掉线）。
+
+        返回 False 表示"旧密码不对"（调用方要把它计入失败账本）；
+        其余情况已经自己回包，返回 None。
+        """
         try:
             data = _json_body(body)
         except ValueError as e:
@@ -428,7 +560,9 @@ class WebUI:
         try:
             self.auth.update_password(str(data.get("old", "")),
                                       str(data.get("new", "")))
-        except ValueError as e:            # AuthError：旧密码不对 / 新密码太弱
+        except _WrongPassword:             # 旧密码不对：交给调用方记账
+            return False
+        except ValueError as e:            # AuthError：新密码太弱等
             return handler.send_json({"ok": False, "error": str(e)}, 400)
         except OSError as e:
             log.error("写 auth.json 失败：%s", e)
@@ -457,6 +591,9 @@ class WebUI:
         class Handler(http.server.BaseHTTPRequestHandler):
             protocol_version = "HTTP/1.1"
             server_version = "ipv6sync-console/" + _version()
+            # 单连接读写超时：没有它，几千个"只发一半请求头"的连接就能把
+            # 线程和文件句柄吃干净（Slowloris）。见审查报告 M-4。
+            timeout = 20
 
             def log_message(self, fmt, *args):
                 log.debug("%s - %s", self.client_address[0], fmt % args)
@@ -471,15 +608,34 @@ class WebUI:
                 return None
 
             def same_origin(self) -> bool:
+                """来源校验：Origin 与 Host 一致，且 Host 在允许名单内（若配了）。
+
+                只比 Origin 与 Host 是可被 DNS rebinding 绕过的（两者的域名
+                都由攻击者控制）；配了 WEB_ALLOWED_HOSTS 之后才有真正的边界。
+                """
+                host = (self.headers.get("Host") or "").lower()
+                if ui.allowed_hosts and host not in ui.allowed_hosts:
+                    log.warning("拒绝未在允许名单内的 Host：%s", host)
+                    return False
                 origin = self.headers.get("Origin")
                 if not origin:
                     return True          # 非浏览器客户端不带 Origin
-                host = self.headers.get("Host") or ""
                 try:
                     o = urllib.parse.urlparse(origin)
                 except ValueError:
                     return False
-                return (o.netloc or "").lower() == host.lower()
+                if (o.netloc or "").lower() != host:
+                    return False
+                # 现代浏览器都会带 Sec-Fetch-Site；带了就必须是同源，
+                # 这是浏览器自己盖章的，页面脚本改不了。
+                sfs = (self.headers.get("Sec-Fetch-Site") or "").lower()
+                if sfs and sfs not in ("same-origin", "none"):
+                    return False
+                return True
+
+            def forwarded_https(self) -> bool:
+                """是否经 HTTPS 反代访问（决定 cookie 要不要加 Secure）。"""
+                return (self.headers.get("X-Forwarded-Proto") or "").lower() == "https"
 
             def _headers_common(self, code, ctype, length, csp=False,
                                 extra=()):
@@ -509,22 +665,34 @@ class WebUI:
                 self.send_bytes(code, body, "application/json; charset=utf-8",
                                 extra=extra_headers)
 
-            def _read_body(self) -> bytes:
+            def _read_body(self) -> bytes | None:
+                """读请求体。超限返回 None（调用方回 413 并关连接）。
+
+                早期版本超限时直接 `return b""` 却不把字节读走 ——
+                keep-alive 下残留的字节会被当成下一个请求的开头，请求错位。
+                """
                 try:
                     n = int(self.headers.get("Content-Length") or 0)
                 except ValueError:
                     n = 0
                 if n <= 0:
                     return b""
-                if n > 1 << 20:
-                    return b""
+                if n > MAX_BODY:
+                    return None
                 return self.rfile.read(n)
 
             def do_GET(self):
                 ui.handle(self, "GET", self.path, b"")
 
             def do_POST(self):
-                ui.handle(self, "POST", self.path, self._read_body())
+                body = self._read_body()
+                if body is None:
+                    self.close_connection = True     # 不读完就不复用这条连接
+                    self.send_json({"ok": False,
+                                    "error": "请求体过大（上限 1MB）"}, 413,
+                                   extra_headers=[("Connection", "close")])
+                    return
+                ui.handle(self, "POST", self.path, body)
 
             def do_HEAD(self):
                 self.send_error(405)
@@ -532,6 +700,36 @@ class WebUI:
         class Server(socketserver.ThreadingMixIn, http.server.HTTPServer):
             daemon_threads = True
             allow_reuse_address = True
+            request_queue_size = 64
+
+            def __init__(self, *a, **kw):
+                super().__init__(*a, **kw)
+                # 并发线程上限：ThreadingMixIn 自己没有 max_children，
+                # 不设的话每个连接一个线程且没有上界。
+                self._slots = threading.BoundedSemaphore(MAX_WORKERS)
+
+            def process_request(self, request, client_address):
+                if not self._slots.acquire(blocking=False):
+                    try:
+                        request.sendall(b"HTTP/1.1 503 Service Unavailable\r\n"
+                                        b"Content-Length: 0\r\n"
+                                        b"Retry-After: 5\r\n"
+                                        b"Connection: close\r\n\r\n")
+                    except OSError:
+                        pass
+                    self.shutdown_request(request)
+                    return
+                try:
+                    super().process_request(request, client_address)
+                except Exception:
+                    self._slots.release()
+                    raise
+
+            def process_request_thread(self, request, client_address):
+                try:
+                    super().process_request_thread(request, client_address)
+                finally:
+                    self._slots.release()
 
         try:
             srv = Server((self.host, self.port), Handler)
@@ -594,4 +792,7 @@ def webui_from_env(node, **overrides) -> WebUI:
     auth_file = (overrides.get("auth_file") or env("AUTH_FILE")
                  or os.path.join(os.path.dirname(settings_file), "auth.json"))
     ttl = env_int("WEB_SESSION_TTL", 12 * 3600)
-    return WebUI(node, host, port, auth_file, ttl)
+    # WEB_ALLOWED_HOSTS：逗号分隔的 Host 白名单（含端口，如 192.168.3.10:6600）。
+    # 不配 = 不限（默认，兼容用 IP / 域名 / 反代访问的常规用法）。
+    allowed = tuple(h.strip() for h in env("WEB_ALLOWED_HOSTS").split(",") if h.strip())
+    return WebUI(node, host, port, auth_file, ttl, allowed_hosts=allowed)
