@@ -291,7 +291,7 @@ class Syncer:
         self._record_dev_stats(cur, came, went, fresh)
         if came:
             notify_events.dispatch(self.cfg, "dev_online",
-                                   "、".join(came) + " 重新连上了网络",
+                                   "、".join(came) + " 已上线",
                                    subject=came[0])
         if went:
             notify_events.dispatch(self.cfg, "dev_offline",
@@ -299,7 +299,7 @@ class Syncer:
                                    subject=went[0])
         if fresh:
             notify_events.dispatch(self.cfg, "dev_new",
-                                   "陌生设备 " + "、".join(fresh) + " 接入了网络",
+                                   "新设备 " + "、".join(fresh) + "接入了网络",
                                    subject=fresh[0])
 
     def _record_dev_stats(self, cur: dict, came: list, went: list, fresh: list) -> None:

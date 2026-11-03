@@ -712,6 +712,24 @@ class DeviceTrackTest(unittest.TestCase):
         self.assertEqual(p.call_args_list[0].args[1], "dev_online")
         self.assertNotIn("dev_new", codes)
 
+    def test_online_copy_wording(self):
+        """上线正文就是「设备名 已上线」，不再叠一句「重新连上了网络」。"""
+        s = self._syncer()
+        s._track_devices(self._hosts(phone=True))             # 基线
+        self._run(s, self._hosts(phone=False))                # 翻成离线
+        codes, p = self._run(s, self._hosts(phone=True))       # 回来
+        self.assertEqual([c.args[1] for c in p.call_args_list], ["dev_online"])
+        self.assertEqual(p.call_args_list[0].args[2], "phone 已上线")
+
+    def test_new_device_copy_wording(self):
+        """新设备正文：前缀「新设备」，后面带 MAC 方便辨认。"""
+        s = self._syncer()
+        s._track_devices(self._hosts(nas=True))                # 基线
+        codes, p = self._run(s, self._hosts(phone=True, nas=True))
+        self.assertEqual([c.args[1] for c in p.call_args_list], ["dev_new"])
+        self.assertEqual(p.call_args_list[0].args[2],
+                         "新设备 phone（aa:bb:cc:dd:ee:00）接入了网络")
+
     def test_empty_table_never_floods_offline(self):
         """一整张空表多半是没读好，绝不能当「全网设备同时离线」。"""
         s = self._syncer()
