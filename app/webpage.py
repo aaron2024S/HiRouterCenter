@@ -600,14 +600,19 @@ html[data-theme="light"] .tpick-mask{background:rgba(30,34,56,.34)}
   border:1px solid var(--line-accent-soft);padding:4px 10px;border-radius:999px;margin-bottom:14px}
 .aeyebrow .dot{width:5px;height:5px;border-radius:50%;background:currentColor}
 .abox h2{font-size:22px;font-weight:650;margin:0 0 7px;letter-spacing:-.01em}
-.abox .asub{font-size:12.5px;color:var(--text-3);margin:0 0 20px}
+.abox .asub{font-size:12.5px;color:var(--text-3);margin:0 0 24px}
 .aerr{display:flex;gap:8px;align-items:flex-start;padding:9px 12px;border-radius:10px;
   font-size:12px;margin-bottom:14px;line-height:1.5;color:var(--err-text);
   background:var(--soft-err);border:1px solid var(--line-err)}
 .aerr svg{width:14px;height:14px;flex:none;margin-top:2px;stroke:currentColor;fill:none;
   stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}
 .aerr[hidden]{display:none}
-.abox .efld{margin-bottom:13px}
+/* 登录门表单的行距要放宽：字段贴字段、复选框贴输入框都被用户点名过
+   （2026-11-03 对照 MailNest 的留白改的）。只作用在 .abox 里，
+   不影响设置页等处共用的 .efld。 */
+.abox .efld{margin-bottom:19px}
+.abox .efld>span{display:block;margin-bottom:8px;font-size:12px;font-weight:550;
+  color:var(--text-2)}
 .abox .wrap{position:relative;display:flex;align-items:center}
 .abox .lead{position:absolute;left:11px;display:grid;place-items:center;pointer-events:none;
   color:var(--text-4)}
@@ -635,14 +640,14 @@ html[data-theme="light"] .tpick-mask{background:rgba(30,34,56,.34)}
 .astrength[hidden]{display:none}
 .abtn{width:100%;display:flex;align-items:center;justify-content:center;gap:8px;
   font-size:13.5px;font-weight:600;color:var(--accent-ink);background:var(--accent);
-  border:1px solid var(--accent);border-radius:10px;padding:11px 14px;margin-top:16px;
+  border:1px solid var(--accent);border-radius:10px;padding:11px 14px;margin-top:22px;
   cursor:pointer;transition:background .14s, transform .06s}
 .abtn:hover{background:var(--accent-hover);border-color:var(--accent-hover)}
 .abtn:active{transform:translateY(1px)}
 .abtn svg{width:15px;height:15px;stroke:currentColor;fill:none;stroke-width:2;
   stroke-linecap:round;stroke-linejoin:round}
 .abtn[disabled]{opacity:.6;cursor:default}
-.aswitch{margin:15px 0 0;font-size:12.5px;color:var(--text-4);text-align:center}
+.aswitch{margin:19px 0 0;font-size:12.5px;color:var(--text-4);text-align:center}
 .aswitch a{color:var(--accent-text);text-decoration:none;cursor:pointer;font-weight:600}
 .aswitch a:hover{text-decoration:underline}
 .afoot{margin-top:auto;padding:18px 44px 20px;font-size:11px;color:var(--text-5);
