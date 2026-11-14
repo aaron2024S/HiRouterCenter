@@ -615,7 +615,7 @@ html[data-theme="light"] .tpick-mask{background:rgba(30,34,56,.34)}
 .abox h2{font-size:22px;font-weight:650;margin:0 0 7px;letter-spacing:-.01em}
 .abox .asub{font-size:12.5px;color:var(--text-3);margin:0 0 24px}
 .aerr{display:flex;gap:8px;align-items:flex-start;padding:9px 12px;border-radius:10px;
-  font-size:12px;margin-bottom:14px;line-height:1.5;color:var(--err-text);
+  font-size:12px;margin:10px 0 0;line-height:1.5;color:var(--err-text);
   background:var(--soft-err);border:1px solid var(--line-err)}
 /* 语气分两档（对齐 dockhelm）：密码错误但还能试 = 琥珀（warn）；
    已锁定 / 设置失败 = 红。锁定倒计时直接写进文字里。 */
@@ -1144,10 +1144,6 @@ html[data-theme="light"] .tpick-mask{background:rgba(30,34,56,.34)}
       <span class="aeyebrow" id="auEyebrow"><span class="dot"></span>首次启动</span>
       <h2 id="auTtl">创建管理员账户</h2>
       <p class="asub" id="auSub">这台设备还没有管理员，先创建一个再继续</p>
-      <div class="aerr" id="auErr" hidden>
-        <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 7.5v5.5M12 16.4v.2"/></svg>
-        <span id="auErrTxt"></span>
-      </div>
       <form id="auForm" autocomplete="on" novalidate>
         <label class="efld"><span>密码</span>
           <div class="wrap has-eye">
@@ -1157,6 +1153,12 @@ html[data-theme="light"] .tpick-mask{background:rgba(30,34,56,.34)}
             <button class="aeye" type="button" id="auEye" aria-label="显示密码">
               <svg viewBox="0 0 24 24"><path d="M2.5 12S6 5.8 12 5.8 21.5 12 21.5 12 18 18.2 12 18.2 2.5 12 2.5 12Z"/><circle cx="12" cy="12" r="2.7"/></svg>
             </button>
+          </div>
+          <!-- 错误提示贴着输入框放下面对齐 dockhelm：视线不用在表单上方和
+               输入框之间来回跳，错在哪一眼就能对上 -->
+          <div class="aerr" id="auErr" hidden>
+            <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 7.5v5.5M12 16.4v.2"/></svg>
+            <span id="auErrTxt"></span>
           </div>
           <div class="astrength" id="auStr" data-lv="0" hidden><i></i><i></i><i></i><i></i></div>
           <p class="ahint" id="auPassHint" hidden></p>
@@ -1587,7 +1589,7 @@ html[data-theme="light"] .tpick-mask{background:rgba(30,34,56,.34)}
             <div class="fieldrow">
               <div class="t"><b>登录保护</b><span>连错几次锁、锁多久。保存后下一次失败记账立即生效</span></div>
               <div class="ctl" style="width:260px;display:flex;justify-content:flex-end">
-                <button class="btn" id="btnLockPolicy" style="flex:none">保存</button>
+                <button class="btn btn-primary" id="btnLockPolicy" style="flex:none">保存</button>
               </div>
             </div>
             <div class="fieldrow">
