@@ -3723,8 +3723,8 @@ function renderNotify() {
       + '<div class="cs">' + escHtml(chSummary(c)) + '</div></div>'
       + '<div class="cacts">'
       + '<button class="btn btn-sm" data-a="test">' + svgI('send') + '测试</button>'
-      + '<button class="btn btn-sm" data-a="edit">编辑</button>'
-      + '<button class="btn btn-sm btn-danger" data-a="del" title="删除">' + svgI('trash') + '</button></div>';
+      + '<button class="btn btn-sm" data-a="edit">' + svgI('edit') + '编辑</button>'
+      + '<button class="btn btn-sm btn-danger" data-a="del">' + svgI('trash') + '删除</button></div>';
     row.querySelector('.sw').addEventListener('click', async () => {
       const want = c.enabled ? false : true;
       const next = chans.map(x => x.id === c.id ? Object.assign({}, x, { enabled: want }) : x);
