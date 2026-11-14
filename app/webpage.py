@@ -832,6 +832,15 @@ html[data-theme="light"] .tpick-mask{background:rgba(30,34,56,.34)}
   <rect x="4.5" y="10.5" width="15" height="9.5" rx="2"/>
   <path d="M8 10.5V7.6a4 4 0 0 1 8 0v2.9"/>
 </symbol>
+<symbol id="i-save" viewBox="0 0 24 24">
+  <path d="M5 5.5h11.2L20 9.3V18a1.5 1.5 0 0 1-1.5 1.5h-13A1.5 1.5 0 0 1 4 18V7a1.5 1.5 0 0 1 1-1.5Z"/>
+  <path d="M8 5.5v4h7v-4"/>
+  <rect x="8" y="13" width="8" height="6.5" rx="0.8"/>
+</symbol>
+<symbol id="i-key" viewBox="0 0 24 24">
+  <circle cx="8.2" cy="14.8" r="4"/>
+  <path d="M11.2 12.2 19 4.4M16.4 7l2.6 2.6M14 9.4l2.3 2.3"/>
+</symbol>
 <symbol id="i-logout" viewBox="0 0 24 24">
   <path d="M9.4 20.4H5.6a2 2 0 0 1-2-2V5.6a2 2 0 0 1 2-2h3.8"/>
   <path d="M15.6 16.4 20 12l-4.4-4.4M20 12H9.2"/>
@@ -1547,7 +1556,7 @@ html[data-theme="light"] .tpick-mask{background:rgba(30,34,56,.34)}
           <div class="sub" id="routerSub"></div>
           <div class="phead-right">
             <button class="btn" id="btnTest"><svg class="i"><use href="#i-zap"/></svg>测试连接</button>
-            <button class="btn btn-primary" id="btnSaveSettings">保存</button>
+            <button class="btn btn-primary" id="btnSaveSettings"><svg class="i"><use href="#i-save"/></svg>保存</button>
           </div>
         </div>
         <div class="card">
@@ -1583,13 +1592,13 @@ html[data-theme="light"] .tpick-mask{background:rgba(30,34,56,.34)}
               <div class="t"><b>确认新密码</b><span>改完只有当前浏览器保持登录，其他设备会掉线</span></div>
               <div class="ctl" style="width:260px;display:flex;gap:8px">
                 <input class="inp" type="password" id="pwNew2" autocomplete="new-password" placeholder="再输一次">
-                <button class="btn btn-primary" id="btnChangePw" style="flex:none">修改密码</button>
+                <button class="btn btn-primary" id="btnChangePw" style="flex:none"><svg class="i"><use href="#i-key"/></svg>修改密码</button>
               </div>
             </div>
             <div class="fieldrow">
               <div class="t"><b>登录保护</b><span>连错几次锁、锁多久。保存后下一次失败记账立即生效</span></div>
               <div class="ctl" style="width:260px;display:flex;justify-content:flex-end">
-                <button class="btn btn-primary" id="btnLockPolicy" style="flex:none">保存</button>
+                <button class="btn btn-primary" id="btnLockPolicy" style="flex:none"><svg class="i"><use href="#i-save"/></svg>保存</button>
               </div>
             </div>
             <div class="fieldrow">

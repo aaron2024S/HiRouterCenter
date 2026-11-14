@@ -100,10 +100,7 @@ class SettingsValidationTest(EnvSandbox):
         self.assertEqual(st.validate_overlay({"LOG_LEVEL": "DEBUG"})["LOG_LEVEL"],
                          "DEBUG")
         with self.assertRaises(st.SettingsError):
-            st.validate_overlay({"ROUTER_SCHEME": "ftp"})
-        self.assertEqual(
-            st.validate_overlay({"ROUTER_SCHEME": "https"})["ROUTER_SCHEME"],
-            "https")
+            st.validate_overlay({"NO_SUCH_KEY": "x"})
 
     def test_bool_coercion(self):
         self.assertTrue(

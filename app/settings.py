@@ -82,10 +82,10 @@ FIELDS: tuple = (
     Field("ROUTER_HOST", "路由器地址", G_ROUTER, "str", "192.168.3.1",
           attr="host", placeholder="192.168.3.1",
           help="LAN 网关地址；容器用 host 网络时填宿主机所在网段的网关"),
-    Field("ROUTER_SCHEME", "协议", G_ROUTER, "select", "http",
-          attr="scheme", choices=SCHEMES, help="家用路由器一般是 http"),
-    Field("ROUTER_USER", "路由器管理员用户名", G_ROUTER, "str", "admin",
-          attr="username", help="华为家用路由固定是 admin"),
+    # ROUTER_SCHEME / ROUTER_USER 不再上界面：华为家用路由固定 http + admin，
+    # 两个都写死成选项反而让人纠结。特殊需要仍可用环境变量覆盖
+    # （ROUTER_SCHEME / ROUTER_USER，见 config.py），旧 settings.json 里
+    # 留着的这两项会被 validate_overlay 记日志跳过，回默认值。
     Field("ROUTER_PASSWORD", "路由器管理员密码", G_ROUTER, "secret", "",
           attr="password", secret=True, placeholder="留空表示不修改",
           help="改这里会以明文写入 settings.json（0600）；连续 3 次错会锁账号，务必一次填对"),
