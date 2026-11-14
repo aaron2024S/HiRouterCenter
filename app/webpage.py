@@ -1591,14 +1591,14 @@ html[data-theme="light"] .tpick-mask{background:rgba(30,34,56,.34)}
               </div>
             </div>
             <div class="fieldrow">
-              <div class="t"><b>连续输错多少次后锁定</b><span>按来源 IP 计数（IPv6 按 /64 聚合）；登录成功即清零，不是累计</span></div>
+              <div class="t"><b>最大连续登录失败次数</b><span>按来源 IP 计数（IPv6 按 /64 聚合），锁定到期或登录成功都会重新计数</span></div>
               <div class="ctl" style="display:flex;align-items:center;gap:8px">
                 <input class="inp" type="number" id="lpMax" min="2" max="20" style="width:88px">
                 <span class="sub">次</span>
               </div>
             </div>
             <div class="fieldrow">
-              <div class="t"><b>锁定时长</b><span>从触发锁定的那次失败起算，倒计时结束自动解除</span></div>
+              <div class="t"><b>连续登录失败锁定时长</b><span>从触发锁定的那次失败起算，倒计时结束自动解除</span></div>
               <div class="ctl" style="display:flex;align-items:center;gap:8px">
                 <input class="inp" type="number" id="lpMin" min="1" max="60" style="width:88px">
                 <span class="sub">分钟</span>
