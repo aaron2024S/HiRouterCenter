@@ -625,12 +625,11 @@ class ConsoleAuthTest(EnvSandbox):
     def test_created_credentials_verify(self):
         os.environ["AUTH_FILE"] = os.path.join(self.tmp.name, "auth.json")
         ui = webui_from_env(FakeNode(), host="127.0.0.1", port=free_port())
-        ui.auth.create("boss", "s3cret-pw-123")
+        ui.auth.create("s3cret-pw-123")
         self.assertTrue(ui.setup_done())
-        self.assertEqual(ui.auth.username(), "boss")
-        self.assertTrue(ui._check_credentials("boss", "s3cret-pw-123"))
-        self.assertFalse(ui._check_credentials("boss", "wrong"))
-        self.assertFalse(ui._check_credentials("admin", "s3cret-pw-123"))
+        self.assertEqual(ui.auth.username(), "admin")
+        self.assertTrue(ui._check_credentials("s3cret-pw-123"))
+        self.assertFalse(ui._check_credentials("wrong"))
 
     def test_env_passwords_are_ignored(self):
         """环境变量里就算还留着 ADMIN_PASSWORD 也绝不生效（已废弃，防止假安全）。"""
@@ -639,7 +638,27 @@ class ConsoleAuthTest(EnvSandbox):
         os.environ["AUTH_FILE"] = os.path.join(self.tmp.name, "auth.json")
         ui = webui_from_env(FakeNode(), host="127.0.0.1", port=free_port())
         self.assertFalse(ui.setup_done())
-        self.assertFalse(ui._check_credentials("legacy", "legacy-pw"))
+        self.assertFalse(ui._check_credentials("legacy-pw"))
+
+    def test_env_force_password_resets(self):
+        """忘记密码兜底：HIROUTERCENTER_PASSWORD 重启即无条件重置。
+
+        与 ADMIN_PASSWORD 的区别：这是文档里写明的重置途径，必须真生效；
+        密码强度不达标时要拒绝并保持原密码，绝不能设个弱密码进去。
+        """
+        os.environ["AUTH_FILE"] = os.path.join(self.tmp.name, "auth.json")
+        ui = webui_from_env(FakeNode(), host="127.0.0.1", port=free_port())
+        ui.auth.create("original-Pass1!")
+        # 合法新密码：重启（重建 WebUI）后生效
+        os.environ["HIROUTERCENTER_PASSWORD"] = "reset-Pass9!"
+        ui2 = webui_from_env(FakeNode(), host="127.0.0.1", port=free_port())
+        self.assertTrue(ui2.auth.verify("reset-Pass9!"))
+        self.assertFalse(ui2.auth.verify("original-Pass1!"))
+        # 弱密码：拒绝重置，旧密码保持
+        os.environ["HIROUTERCENTER_PASSWORD"] = "short"
+        ui3 = webui_from_env(FakeNode(), host="127.0.0.1", port=free_port())
+        self.assertTrue(ui3.auth.verify("reset-Pass9!"), "弱密码不该把密码改坏")
+        os.environ.pop("HIROUTERCENTER_PASSWORD", None)
 
 
 class HealthServerScopeTest(EnvSandbox):
@@ -732,7 +751,7 @@ class WebUITest(unittest.TestCase):
         self.auth_file = os.path.join(tempfile.mkdtemp(), "auth.json")
         self.ui = WebUI(self.node, "127.0.0.1", self.port, self.auth_file,
                         session_ttl=3600)
-        self.ui.auth.create("admin", "web-Secret1!")
+        self.ui.auth.create("web-Secret1!")
         self.srv = self.ui.start()
         self.assertIsNotNone(self.srv, "控制台没起来")
         self.base = f"http://127.0.0.1:{self.port}"
@@ -777,16 +796,19 @@ class WebUITest(unittest.TestCase):
                           {"user": "admin", "password": "nope"})
         self.assertEqual(code, 401)
         self.assertFalse(j["ok"])
+        self.assertEqual(j.get("remaining"), 4,
+                         "失败响应要带「还可尝试 N 次」（默认 5 次锁定）")
 
-    def test_wrong_username_rejected(self):
+    def test_user_field_is_ignored(self):
+        """单密码模式：请求里带不带 user、带的 user 对不对都无所谓。"""
         code, _, _ = call(self.base, "/api/login", "POST",
                           {"user": "root", "password": "web-Secret1!"})
-        self.assertEqual(code, 401)
+        self.assertEqual(code, 200, "user 字段已被忽略，密码对就该放行")
 
     # ---- 登录后的完整流程 ----
     def login(self) -> str:
         code, j, hdr = call(self.base, "/api/login", "POST",
-                            {"user": "admin", "password": "web-Secret1!"})
+                            {"password": "web-Secret1!"})
         self.assertEqual(code, 200, j)
         cookie = hdr.get("Set-Cookie", "")
         self.assertIn("HttpOnly", cookie)
@@ -985,7 +1007,7 @@ class WebUILoginThrottleTest(unittest.TestCase):
         self.port = free_port()
         self.ui = WebUI(FakeNode(), "127.0.0.1", self.port,
                         os.path.join(tempfile.mkdtemp(), "auth.json"))
-        self.ui.auth.create("admin", "web-Secret1!")
+        self.ui.auth.create("web-Secret1!")
         self.ui.start()
         self.base = f"http://127.0.0.1:{self.port}"
 
@@ -993,56 +1015,88 @@ class WebUILoginThrottleTest(unittest.TestCase):
         self.ui.stop()
 
     def test_throttle_after_repeated_failures(self):
+        """连错到阈值（默认 5）：触发的那次起就 429，之后一直 429。"""
         codes = []
         for _ in range(10):
             code, _, _ = call(self.base, "/api/login", "POST",
-                              {"user": "admin", "password": "wrong"})
+                              {"password": "wrong"})
             codes.append(code)
-        self.assertIn(429, codes, f"连续失败应触发限速，实际 {codes}")
-        # 被限速后即使密码对也不行，防止"边爆破边撞对"
+        self.assertIn(429, codes, f"连续失败应触发锁定，实际 {codes}")
+        self.assertEqual(codes[-1], 429, "锁定后应一直 429，不会自愈")
+        # 被锁定后即使密码对也不行，防止"边爆破边撞对"
         code, j, _ = call(self.base, "/api/login", "POST",
-                          {"user": "admin", "password": "web-Secret1!"})
+                          {"password": "web-Secret1!"})
         self.assertEqual(code, 429)
-        self.assertIn("秒后再试", j["error"])
+        self.assertIn("分钟后再试", j["error"])
+        self.assertIn("retryAfter", j, "锁定响应要带剩余秒数给前端做倒计时")
+
+    def test_failure_response_carries_remaining(self):
+        """失败响应带 remaining（还可尝试几次），前端用它显示提示条。"""
+        for expect in (4, 3, 2, 1):
+            code, j, _ = call(self.base, "/api/login", "POST",
+                              {"password": "wrong"})
+            self.assertEqual(code, 401)
+            self.assertEqual(j.get("remaining"), expect)
+
+    def test_setup_status_carries_lock_state(self):
+        """setup-status 要给登录页「还可尝试 N 次」和锁定倒计时接续用的数据。"""
+        code, j, _ = call(self.base, "/api/setup-status")
+        self.assertEqual(j["maxFailures"], 5)
+        self.assertEqual(j["failures"], 5, "没失败过就是满额机会")
+        self.assertEqual(j["lockedFor"], 0)
+        for _ in range(2):
+            call(self.base, "/api/login", "POST", {"password": "wrong"})
+        code, j, _ = call(self.base, "/api/setup-status")
+        self.assertEqual(j["failures"], 3, "错 2 次后还剩 3 次")
+        # 锁定后 lockedFor > 0（刷新页面要能接上倒计时）
+        for _ in range(3):
+            call(self.base, "/api/login", "POST", {"password": "wrong"})
+        code, j, _ = call(self.base, "/api/setup-status")
+        self.assertGreater(j["lockedFor"], 0)
 
     def test_success_clears_failure_counter(self):
         for _ in range(3):
             call(self.base, "/api/login", "POST",
-                 {"user": "admin", "password": "wrong"})
+                 {"password": "wrong"})
         code, _, _ = call(self.base, "/api/login", "POST",
-                          {"user": "admin", "password": "web-Secret1!"})
+                          {"password": "web-Secret1!"})
         self.assertEqual(code, 200)
-        self.assertEqual(self.ui._throttled("127.0.0.1"), 0.0)
+        self.assertEqual(self.ui._throttled("127.0.0.1"), (0.0, False))
 
-    # ---- 防爆破升级：递进锁定 / 全局熔断（直接测内部状态，不拖 0.25s 延时）----
+    # ---- 防爆破：固定时长锁定 / 全局降速 / 策略可调（不拖 0.25s 延时）----
 
-    def test_lock_escalates_and_resets_on_release(self):
+    def test_lock_fires_at_threshold_and_expires(self):
+        """窗口内第 5 次失败触发锁定，时长=锁定分钟数；出狱后窗口清零。"""
         ip = "10.9.9.9"
-        for _ in range(8):
-            self.ui._note_fail(ip)
-        w1 = self.ui._throttled(ip)
-        self.assertTrue(299 <= w1 <= 300, f"首次锁定应约 300 秒，实际 {w1}")
-
-        # 锁定期间一直返回剩余等待
-        self.assertGreater(self.ui._throttled(ip), 0)
-
-        # 时间过去，出狱后窗口清零、可以再来，但下次锁更久
+        locked, remaining, lock = (False, 5, 0.0)
+        for i in range(5):
+            locked, remaining, lock = self.ui._note_fail(ip)
+        self.assertTrue(locked, "第 5 次失败应触发锁定")
+        self.assertEqual(lock, 300, "默认锁定 5 分钟")
+        w, is_locked = self.ui._throttled(ip)
+        self.assertTrue(is_locked)
+        self.assertTrue(0 < w <= 300)
+        # 出狱：窗口清零、不再锁定
         self.ui._locked_until[ip] = time.time() - 1
-        self.assertEqual(self.ui._throttled(ip), 0.0)
-        for _ in range(8):
-            self.ui._note_fail(ip)
-        w2 = self.ui._throttled(ip)
-        self.assertTrue(599 <= w2 <= 600, f"第二次锁定应约 600 秒，实际 {w2}")
+        self.assertEqual(self.ui._throttled(ip), (0.0, False))
+        locked, remaining, lock = self.ui._note_fail(ip)
+        self.assertFalse(locked)
+        self.assertEqual(remaining, 4, "出狱后重新计数")
 
-        # 顶到上限 LOCK_MAX
-        self.ui._locked_until[ip] = time.time() - 1
-        for _ in range(9):          # 跳过中间几档，直接堆 strikes
-            self.ui._locked_until[ip] = time.time() - 1
-            self.ui._strikes[ip] = 20
-            for _ in range(8):
-                self.ui._note_fail(ip)
-            w = self.ui._throttled(ip)
-        self.assertLessEqual(w, 6 * 3600 + 1, "锁定时长不应超过 LOCK_MAX")
+    def test_lock_policy_is_adjustable(self):
+        """设置页保存的连错次数 / 锁定分钟，下一次记账立即按新值算。"""
+        pol = self.ui._set_lock_policy(3, 2)
+        self.assertEqual(pol, {"maxFailures": 3, "minutes": 2})
+        ip = "10.7.7.7"
+        for _ in range(3):
+            locked, remaining, lock = self.ui._note_fail(ip)
+        self.assertTrue(locked)
+        self.assertEqual(lock, 120, "按新策略锁 2 分钟")
+        # 越界夹回 + 持久化到 auth.json
+        pol = self.ui._set_lock_policy(999, 0)
+        self.assertEqual(pol, {"maxFailures": 20, "minutes": 1})
+        again = WebUI(FakeNode(), "127.0.0.1", free_port(), self.ui.auth.path)
+        self.assertEqual(again.auth.policy(), {"max_failures": 20, "minutes": 1})
 
     def test_global_pressure_slows_down_but_never_locks_out(self):
         """全局失败量高时只降速，不整体拒登。
@@ -1052,19 +1106,23 @@ class WebUILoginThrottleTest(unittest.TestCase):
         """
         for i in range(60):
             self.ui._note_fail(f"10.1.0.{i}")
-        self.assertEqual(self.ui._throttled("10.2.3.4"), 0.0,
+        self.assertEqual(self.ui._throttled("10.2.3.4"), (0.0, False),
                          "全新来源不该被全局拒登")
         self.assertTrue(self.ui._global_pressure(), "但应进入全局降速状态")
 
-    def test_successful_login_resets_strikes(self):
-        ip = "10.9.9.9"
-        self.ui._strikes[ip] = 3
-        self.ui._locked_until[ip] = time.time() - 1
-        self.ui._fails[ip] = [time.time()] * 8
-        self.ui._clear_fails(ip)
-        self.assertEqual(self.ui._throttled(ip), 0.0)
-        self.assertEqual(self.ui._strikes.get(ip, 0), 0,
-                         "登录成功后应清空递进锁定计数")
+    def test_lock_policy_api_requires_session_and_round_trips(self):
+        """/api/auth/lock-policy：未登录 401；登录后保存并能读回。"""
+        code, _, _ = call(self.base, "/api/auth/lock-policy", "POST",
+                          {"max_failures": 4, "minutes": 3})
+        self.assertEqual(code, 401)
+        cookie = "ipv6sync_web=" + self.ui._new_token("admin")
+        code, j, _ = call(self.base, "/api/auth/lock-policy", "POST",
+                          {"max_failures": 4, "minutes": 3}, cookie=cookie)
+        self.assertEqual((code, j["ok"]), (200, True))
+        self.assertEqual(j["lock"], {"maxFailures": 4, "minutes": 3})
+        code, j, _ = call(self.base, "/api/session", cookie=cookie)
+        self.assertEqual(j["lock"], {"maxFailures": 4, "minutes": 3},
+                         "session 要把当前策略带给设置页")
 
 
 class WebUIDisabledTest(unittest.TestCase):

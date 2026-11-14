@@ -84,12 +84,12 @@ class AuthMatrixTest(unittest.TestCase):
         cls.port = free_port()
         cls.ui = WebUI(StubNode(), "127.0.0.1", cls.port,
                        os.path.join(cls.tmp, "auth.json"))
-        cls.ui.auth.create("admin", PASSWORD)
+        cls.ui.auth.create(PASSWORD)
         cls.ui.start()
         cls.base = f"http://127.0.0.1:{cls.port}"
         time.sleep(0.3)
         code, _, hdrs = call(cls.base, "/api/login", "POST",
-                             {"user": "admin", "password": PASSWORD})
+                             {"password": PASSWORD})
         assert code == 200, f"测试自身登录失败：{code}"
         cls.cookie = "ipv6sync_web=" + cls.ui._new_token("admin")
 
@@ -154,7 +154,7 @@ class SetupAndPasswordTest(unittest.TestCase):
         """首次初始化的窗口期不能被任意网页抢注（审查 H-2）。"""
         for ctype in ("text/plain", "application/json"):
             code, _, _ = call(self.base, "/api/setup", "POST",
-                              {"user": "pwned", "password": "Pwn3d-Pass!",
+                              {"password": "Pwn3d-Pass!",
                                "password2": "Pwn3d-Pass!"},
                               {"Origin": "http://evil.example",
                                "Content-Type": ctype})
@@ -164,7 +164,7 @@ class SetupAndPasswordTest(unittest.TestCase):
 
     def test_setup_status_does_not_leak_username(self):
         """未认证接口不回显管理员名（审查 M-2）。"""
-        self.ui.auth.create("admin", PASSWORD)
+        self.ui.auth.create(PASSWORD)
         code, txt, _ = call(self.base, "/api/setup-status")
         j = json.loads(txt)
         self.assertTrue(j["setupDone"])
@@ -172,7 +172,7 @@ class SetupAndPasswordTest(unittest.TestCase):
 
     def test_password_change_requires_session(self):
         """未登录改密必须 401，且原密码不受影响（审查 H-1）。"""
-        self.ui.auth.create("admin", PASSWORD)
+        self.ui.auth.create(PASSWORD)
         for i in range(5):
             code, _, _ = call(self.base, "/api/password", "POST",
                               {"old": f"guess{i}", "new": "Attacker-Pass1!"})
@@ -180,7 +180,7 @@ class SetupAndPasswordTest(unittest.TestCase):
         code, _, _ = call(self.base, "/api/password", "POST",
                           {"old": PASSWORD, "new": "Attacker-Pass1!"})
         self.assertEqual(code, 401, "知道旧密码也必须先登录")
-        self.assertTrue(self.ui.auth.verify("admin", PASSWORD), "密码不该被改掉")
+        self.assertTrue(self.ui.auth.verify(PASSWORD), "密码不该被改掉")
 
     def test_broken_auth_file_allows_recovery(self):
         """auth.json 半截损坏 → 允许重建，并把坏文件留证（审查 M-3）。"""
@@ -191,7 +191,7 @@ class SetupAndPasswordTest(unittest.TestCase):
         self.assertFalse(j["setupDone"], "损坏时入口必须重新打开")
         self.assertTrue(j["broken"], "要能告诉用户是文件坏了")
         code, _, _ = call(self.base, "/api/setup", "POST",
-                          {"user": "admin", "password": PASSWORD,
+                          {"password": PASSWORD,
                            "password2": PASSWORD})
         self.assertEqual(code, 200, "损坏后必须能自救")
         backups = [f for f in os.listdir(self.tmp) if "broken" in f]
@@ -218,25 +218,33 @@ class SetupAndPasswordTest(unittest.TestCase):
 
 
 class TimingSideChannelTest(unittest.TestCase):
-    """用户名对不对，耗时必须同量级（审查 M-1）。"""
+    """校验路径的耗时必须同量级（审查 M-1 的余波）。
+
+    单密码模式后「用户名错」这条路径没有了，但还剩两条：凭据文件在
+    （真跑一次 scrypt）与文件不在（跑一次同样参数的假 scrypt）——
+    后者也要等量耗时，否则"还没有管理员"这件事能从响应快慢里探出来。
+    """
 
     def setUp(self):
         self.store = AuthStore(os.path.join(tempfile.mkdtemp(), "auth.json"))
-        self.store.create("admin", PASSWORD)
+        self.store.create(PASSWORD)
 
-    def _avg(self, user):
-        ts = []
+    def test_missing_file_is_not_obviously_faster(self):
+        ts_known = []
         for _ in range(3):
             t0 = time.perf_counter()
-            self.store.verify(user, "definitely-wrong")
-            ts.append(time.perf_counter() - t0)
-        return sum(ts) / len(ts)
-
-    def test_unknown_username_is_not_obviously_faster(self):
-        known, unknown = self._avg("admin"), self._avg("nobody-here")
-        ratio = max(known, unknown) / max(1e-6, min(known, unknown))
-        # 短路版本这里是 400 倍以上；跑一次假 scrypt 之后应该在 1.x
-        self.assertLess(ratio, 3.0, f"用户名可被时间侧信道枚举（比值 {ratio:.1f}×）")
+            self.store.verify("definitely-wrong")
+            ts_known.append(time.perf_counter() - t0)
+        empty = AuthStore(os.path.join(tempfile.mkdtemp(), "auth.json"))
+        ts_missing = []
+        for _ in range(3):
+            t0 = time.perf_counter()
+            empty.verify("definitely-wrong")
+            ts_missing.append(time.perf_counter() - t0)
+        hi, lo = max(max(ts_known), max(ts_missing)), min(min(ts_known), min(ts_missing))
+        ratio = hi / max(1e-6, lo)
+        self.assertLess(ratio, 3.0,
+                        f"文件不存在可被时间侧信道探测（比值 {ratio:.1f}×）")
 
 
 class VersionConsistencyTest(unittest.TestCase):

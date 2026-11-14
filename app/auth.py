@@ -3,13 +3,19 @@
 
 设计约束（与控制台定位匹配 —— 单用户、NAS 本地部署）：
 
-* **只存哈希不存明文**。scrypt（RFC 7914）+ 每账号独立盐，参数随文件一起落盘，
+* **只存哈希不存明文**。scrypt（RFC 7914）+ 独立盐，参数随文件一起落盘，
   以后调参数不影响旧文件校验。
+* **单密码模式**（参考 dockhelm）：这个控制台本来就只有「管理员」一个角色，
+  用户名没有存在的意义，登录/创建都只问密码。auth.json 里不再写 username；
+  旧版本文件里已有的 username 照样能读出来（兼容，仅作显示用）。
 * **原子写**：先写同目录临时文件再 `os.replace`，断电不会留下半截 JSON。
 * **文件权限 0600**：凭据文件只留给容器主用户。Windows 上 chmod 是近似的，
   但本程序只在 Linux 容器里跑，这里是尽力而为的防御。
 * **首次创建即关闭**：管理员只允许创建一次（`create` 在文件已存在时抛错），
-  「重置」= 有宿主机权限的人删掉 auth.json 重启 —— 等价于用磁盘权限换控制台权限。
+  「重置」有两种官方途径：设环境变量 HIROUTERCENTER_PASSWORD 重启（见
+  webui_from_env），或删掉 auth.json 重启 —— 等价于用磁盘权限换控制台权限。
+* **登录保护策略跟着凭据文件走**（`lock` 字段）：连错几次锁、锁多久，
+  设置页可调 —— 存在 auth.json 里，删文件重置后自动回到默认值。
 """
 from __future__ import annotations
 
@@ -31,6 +37,44 @@ ALGO = "scrypt"
 N, R, P, DKLEN = 2 ** 14, 8, 1, 32          # OWASP 推荐：n=2^14, r=8, p=1
 MIN_PASSWORD_LEN = 8
 USERNAME_RE = re.compile(r"^[A-Za-z0-9_.\-]{2,32}$")
+
+# 登录保护策略的默认值与可调范围（设置页输入框与后端校验共用这一份）。
+# 下限不能是 1：手滑一次就锁死自己，等于把控制台变成需要删文件的砖头；
+# 上限也别放开 ——「错 200 次才锁」和没锁一样。
+LOCK_DEFAULT_FAILURES = 5      # 窗口内连错 5 次
+LOCK_DEFAULT_MINUTES = 5       # 锁 5 分钟
+LOCK_MIN_FAILURES, LOCK_MAX_FAILURES = 2, 20
+LOCK_MIN_MINUTES, LOCK_MAX_MINUTES = 1, 60
+FAIL_WINDOW = 300.0            # 失败计数滑动窗口（秒），与 webui 共用
+
+# 单密码模式下不再有「用户名错」这条路径，token 归属统一用这个占位身份
+# （只进内存与日志，界面上不显示）。
+CONSOLE_USER = "admin"
+
+
+def _clamp(v: int, lo: int, hi: int, default: int) -> int:
+    try:
+        v = int(v)
+    except (TypeError, ValueError):
+        return default
+    return max(lo, min(hi, v))
+
+
+def normalize_policy(failures, minutes) -> dict:
+    """锁定策略的统一入口：越界值夹到合法区间而不是拒绝。
+
+    这个数字来自界面输入，让保存因为一个数字失败没有必要；但也绝不能
+    让它变成 0 或负数 —— 那等于关掉锁定或永久锁死。
+    """
+    return {
+        "max_failures": _clamp(failures, LOCK_MIN_FAILURES, LOCK_MAX_FAILURES,
+                               LOCK_DEFAULT_FAILURES),
+        "minutes": _clamp(minutes, LOCK_MIN_MINUTES, LOCK_MAX_MINUTES,
+                          LOCK_DEFAULT_MINUTES),
+    }
+
+
+DEFAULT_LOCK = normalize_policy(LOCK_DEFAULT_FAILURES, LOCK_DEFAULT_MINUTES)
 
 
 class AuthError(ValueError):
@@ -128,9 +172,10 @@ class AuthStore:
         except (OSError, ValueError) as e:
             self._warn_broken(e)
             return None
-        if isinstance(data, dict) and data.get("username"):
+        # 兼容两种形态：新文件只有 password；旧文件是 username + password
+        if isinstance(data, dict) and isinstance(data.get("password"), dict):
             return data
-        self._warn_broken("缺少 username 字段")
+        self._warn_broken("缺少 password 字段")
         return None
 
     def _warn_broken(self, why) -> None:
@@ -147,18 +192,24 @@ class AuthStore:
         return self.exists() and self.load() is None
 
     def username(self) -> str:
+        """兼容旧文件：老 auth.json 里有 username 就用它的；新文件统一 admin。
+
+        这个值只用于日志与会话归属，界面上不再显示、登录也不再校验。
+        """
         rec = self.load()
-        return str(rec["username"]) if rec else ""
+        if rec and rec.get("username"):
+            return str(rec["username"])
+        return CONSOLE_USER
 
     # ---- 变更 ----
 
-    def create(self, username: str, password: str) -> dict:
-        """创建管理员。只允许成功一次 —— 之后一切创建请求都拒绝。
+    def create(self, password: str) -> dict:
+        """创建管理员（单密码模式，不再要用户名）。只允许成功一次 ——
+        之后一切创建请求都拒绝。
 
         唯一的例外是**凭据文件损坏**：这时允许重建，否则控制台会锁死
         （入口关着、登录永远失败）。旧文件先改名留证，不静默覆盖。
         """
-        name = check_username(username)
         pw = check_password(password)
         with self._mu:
             if self.exists():
@@ -170,26 +221,35 @@ class AuthStore:
                     log.error("凭据文件损坏，已备份为 %s 并重新初始化", backup)
                 except OSError as e:
                     log.error("凭据文件损坏且无法备份（%s），改为直接覆盖", e)
-            rec = {"username": name, "password": _hash(pw),
+            rec = {"password": _hash(pw),
+                   "lock": dict(DEFAULT_LOCK),
                    "created_at": int(time.time()), "updated_at": int(time.time())}
             self._write(rec)
             return rec
 
-    def verify(self, username: str, password: str) -> bool:
-        """校验用户名 + 密码。
-
-        **两条路径耗时必须同量级**：用户名对不对都跑一次 scrypt。
-        早期版本写成 `ok_u and _verify_hash(...)`，短路让"用户名错"只花 0.3ms，
-        比"用户名对"快 400 多倍 —— 等于把用户名白送（审查报告 M-1）。
-        """
+    def verify(self, password: str) -> bool:
+        """校验密码。单密码模式只有一条路径，恒定时间问题自然消失。"""
         rec = self.load()
         if not rec:
             _verify_hash(password or "", _dummy_rec())
             return False
-        ok_u = hmac.compare_digest((username or "").encode("utf-8"),
-                                   str(rec["username"]).encode("utf-8"))
-        ok_p = _verify_hash(password or "", rec["password"])
-        return bool(ok_u and ok_p)
+        return bool(_verify_hash(password or "", rec["password"]))
+
+    def set_password(self, new: str) -> None:
+        """无条件覆盖密码（忘记密码时用环境变量重置的唯一入口）。
+
+        与 update_password 的区别：不问旧密码 —— 敢调这个的只有两种人，
+        拿着 HIROUTERCENTER_PASSWORD 重启容器的宿主机主人，和测试。
+        """
+        pw = check_password(new)
+        rec = self.load()
+        with self._mu:
+            if not rec:
+                rec = {"lock": dict(DEFAULT_LOCK),
+                       "created_at": int(time.time())}
+            rec["password"] = _hash(pw)
+            rec["updated_at"] = int(time.time())
+            self._write(rec)
 
     def update_password(self, old: str, new: str) -> None:
         """已登录的改密。旧密码必须对 —— 防止被劫持的会话直接换锁。"""
@@ -203,6 +263,25 @@ class AuthStore:
             rec["password"] = _hash(pw)
             rec["updated_at"] = int(time.time())
             self._write(rec)
+
+    # ---- 登录保护策略（存 auth.json 的 lock 字段，跟着凭据文件走） ----
+
+    def policy(self) -> dict:
+        rec = self.load()
+        lock = (rec or {}).get("lock") or {}
+        return normalize_policy(lock.get("max_failures"),
+                                lock.get("minutes"))
+
+    def set_policy(self, failures, minutes) -> dict:
+        pol = normalize_policy(failures, minutes)
+        rec = self.load()
+        with self._mu:
+            if not rec:
+                raise AuthError("管理员尚未创建")
+            rec["lock"] = pol
+            rec["updated_at"] = int(time.time())
+            self._write(rec)
+        return pol
 
 
     # ---- 落盘 ----

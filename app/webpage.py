@@ -117,8 +117,11 @@ a.lnk:hover .go{color:var(--accent-text)}
 .nav{display:flex;min-height:0;flex:1;flex-direction:column;gap:2px;overflow-y:auto}
 .navg{padding:12px 10px 5px;font-size:11px;letter-spacing:.5px;color:var(--text-6)}
 .ni{display:flex;width:100%;align-items:center;gap:9px;border:0;background:transparent;
-  border-radius:9px;padding:8px 10px;text-align:left;font-size:13px;color:var(--text-3);
+  border-radius:9px;padding:8px 10px;text-align:left;font-size:13.5px;color:var(--text-3);
   cursor:pointer;transition:background .15s,color .15s}
+/* 侧栏图标：15px 细线在小屏缩放下偏小、图形还容易糊在一起（用户点名），
+   放大到 17px 并稍加粗线，与 13.5px 的文字重新对齐 */
+.ni .i{width:17px;height:17px;stroke-width:1.8}
 .ni:hover{background:var(--ink-700);color:var(--text-1)}
 .ni[aria-current="true"]{background:var(--accent-soft);color:var(--accent-text)}
 .ni .cnt{margin-left:auto;flex:none;border-radius:6px;padding:0 6px;
@@ -614,6 +617,10 @@ html[data-theme="light"] .tpick-mask{background:rgba(30,34,56,.34)}
 .aerr{display:flex;gap:8px;align-items:flex-start;padding:9px 12px;border-radius:10px;
   font-size:12px;margin-bottom:14px;line-height:1.5;color:var(--err-text);
   background:var(--soft-err);border:1px solid var(--line-err)}
+/* 语气分两档（对齐 dockhelm）：密码错误但还能试 = 琥珀（warn）；
+   已锁定 / 设置失败 = 红。锁定倒计时直接写进文字里。 */
+.aerr[data-tone="warn"]{color:var(--warn-text);background:var(--soft-warn);
+  border-color:var(--line-warn)}
 .aerr svg{width:14px;height:14px;flex:none;margin-top:2px;stroke:currentColor;fill:none;
   stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}
 .aerr[hidden]{display:none}
@@ -662,6 +669,22 @@ html[data-theme="light"] .tpick-mask{background:rgba(30,34,56,.34)}
 .aswitch{margin:19px 0 0;font-size:12.5px;color:var(--text-4);text-align:center}
 .aswitch a{color:var(--accent-text);text-decoration:none;cursor:pointer;font-weight:600}
 .aswitch a:hover{text-decoration:underline}
+/* 忘记密码：链接 + 展开的两种重置方法 */
+.aforgot{margin:16px 0 0;font-size:12.5px;text-align:center}
+.alink{border:0;background:transparent;color:var(--accent-text);cursor:pointer;
+  font-size:12.5px;font-weight:600;padding:2px 4px}
+.alink:hover{text-decoration:underline}
+.atip{margin-top:12px;text-align:left;font-size:12px;line-height:1.65;color:var(--text-3);
+  background:var(--ink-800);border:1px solid var(--line-2);border-radius:10px;
+  padding:12px 14px}
+.atip code{font-family:ui-monospace,Consolas,monospace;font-size:11.5px;
+  background:var(--ink-700);border-radius:4px;padding:1px 5px;color:var(--text-2)}
+.atipsub{margin:2px 0 6px;font-weight:600;color:var(--text-2)}
+.atipsub+.atipsub, .atip ol+ .atipsub{margin-top:12px}
+.atip ol{margin:0 0 4px;padding-left:20px}
+.atip ol li{margin:3px 0}
+.atipwarn{margin:10px 0 0;color:var(--warn-text)}
+.atip[hidden]{display:none}
 .afoot{margin-top:auto;padding:18px 44px 20px;font-size:11px;color:var(--text-5);
   display:flex;align-items:center;justify-content:center;gap:7px;flex-wrap:wrap}
 .afoot .dot{width:3px;height:3px;border-radius:50%;background:currentColor;opacity:.55}
@@ -779,8 +802,8 @@ html[data-theme="light"] .tpick-mask{background:rgba(30,34,56,.34)}
 </symbol>
 <symbol id="i-info" viewBox="0 0 24 24">
   <circle cx="12" cy="12" r="9.2"/>
-  <path class="f" d="M12 10.6h0v6.2a1 1 0 0 0 2 0v-6.2Z"/>
-  <circle cx="12" cy="7.7" r="1.2" stroke="none" class="f"/>
+  <circle cx="12" cy="8" r="1.15" class="ff"/>
+  <path d="M12 11.4v5.4"/>
 </symbol>
 <symbol id="i-refresh" viewBox="0 0 24 24">
   <path d="M20.4 11.2a8.4 8.4 0 0 0-14.5-4.6L3.6 8.8"/>
@@ -1126,12 +1149,6 @@ html[data-theme="light"] .tpick-mask{background:rgba(30,34,56,.34)}
         <span id="auErrTxt"></span>
       </div>
       <form id="auForm" autocomplete="on" novalidate>
-        <label class="efld"><span>用户名</span>
-          <div class="wrap">
-            <span class="lead"><svg viewBox="0 0 24 24"><circle cx="12" cy="8.5" r="3.4"/><path d="M5 19.5c1.3-3.2 4-4.8 7-4.8s5.7 1.6 7 4.8"/></svg></span>
-            <input class="inp" id="auUser" name="username" placeholder="给管理员起个名字"
-                   autocomplete="username" spellcheck="false"></div>
-        </label>
         <label class="efld"><span>密码</span>
           <div class="wrap has-eye">
             <span class="lead"><svg viewBox="0 0 24 24"><rect x="4.5" y="10" width="15" height="10" rx="2.4"/><path d="M8 10V7.6a4 4 0 0 1 8 0V10"/></svg></span>
@@ -1161,8 +1178,31 @@ html[data-theme="light"] .tpick-mask{background:rgba(30,34,56,.34)}
           <span id="auBtnTxt">创建账户</span>
           <svg viewBox="0 0 24 24"><path d="M5 12h13M13 6.5 18.5 12 13 17.5"/></svg>
         </button>
+        <!-- 忘记密码：只给方法不给假入口（重置必须动宿主机侧的文件/环境变量）。
+             两种兜底都写清楚 —— ① 环境变量重置的三个坑（密码强度、必须 up -d
+             重建、留着会每次启动都重置）② 删 auth.json。 -->
+        <div class="aforgot" id="auForgotBox" hidden>
+          <button type="button" class="alink" id="auForgot">忘记密码？</button>
+          <div class="atip" id="auForgotTip" hidden>
+            <p class="atipsub">方法一：临时设置环境变量 HIROUTERCENTER_PASSWORD</p>
+            <ol>
+              <li>容器的 <code>environment</code> 里加一行
+                <code>HIROUTERCENTER_PASSWORD:</code> 你的新密码
+                （至少 8 位，含字母、数字和特殊字符）。</li>
+              <li>保存后重建容器（<code>docker compose up -d</code>，只 restart 读不到新环境变量）。</li>
+              <li>用临时密码登录后，到「设置」里改掉密码，然后把这行删掉再重启容器
+                —— 留着的话，每次启动都会把密码改回临时值。</li>
+            </ol>
+            <p class="atipsub">方法二：删掉密码文件 auth.json</p>
+            <ol>
+              <li>在 NAS 的文件管理里找到 HiRouterCenter 的数据目录。</li>
+              <li>删掉目录里的 <code>auth.json</code>。</li>
+              <li>重启容器，再打开控制台就会回到「设置密码」页面。</li>
+            </ol>
+            <p class="atipwarn">重置后，所有设备上已有的登录会一并失效。</p>
+          </div>
+        </div>
       </form>
-      <p class="aswitch" id="auSwitch" hidden>已有管理员账号？<a id="auToLogin">去登录</a></p>
     </div>
     <div class="afoot">
       <span id="auVer">HiRouterCenter</span><span class="dot"></span>
@@ -1518,14 +1558,15 @@ html[data-theme="light"] .tpick-mask{background:rgba(30,34,56,.34)}
           <div class="ch"><svg class="i"><use href="#i-knob"/></svg><span>运行行为</span></div>
           <div class="cb" id="behaviorFields"></div>
         </div>
-        <!-- 控制台账号：管理员是在网页里创建的，也必须能在网页里改密码 ——
-             之前只有后端接口没有入口，用户建完账号就再也没法换密码了。 -->
+        <!-- 控制台账号：单密码模式，这里管两件事 —— 改访问密码 + 登录保护。
+             密码是在网页里设置的，也必须能在网页里换（之前只有后端接口
+             没有入口，用户设完就再也没法换了）。 -->
         <div class="card">
           <div class="ch"><svg class="i"><use href="#i-lock"/></svg><span>控制台账号</span>
-            <span class="hint" id="acctUser"></span></div>
+            <span class="hint" id="acctHint"></span></div>
           <div class="cb">
             <div class="fieldrow">
-              <div class="t"><b>当前密码</b><span>忘了就删掉 data/auth.json 重启容器，重新创建</span></div>
+              <div class="t"><b>当前密码</b><span>忘了就看登录页的「忘记密码」，两种重置方法都写在那儿</span></div>
               <div class="ctl" style="width:260px">
                 <input class="inp" type="password" id="pwOld" autocomplete="current-password" placeholder="当前登录密码">
               </div>
@@ -1541,6 +1582,26 @@ html[data-theme="light"] .tpick-mask{background:rgba(30,34,56,.34)}
               <div class="ctl" style="width:260px;display:flex;gap:8px">
                 <input class="inp" type="password" id="pwNew2" autocomplete="new-password" placeholder="再输一次">
                 <button class="btn btn-primary" id="btnChangePw" style="flex:none">修改密码</button>
+              </div>
+            </div>
+            <div class="fieldrow">
+              <div class="t"><b>登录保护</b><span>连错几次锁、锁多久。保存后下一次失败记账立即生效</span></div>
+              <div class="ctl" style="width:260px;display:flex;justify-content:flex-end">
+                <button class="btn" id="btnLockPolicy" style="flex:none">保存</button>
+              </div>
+            </div>
+            <div class="fieldrow">
+              <div class="t"><b>连续输错多少次后锁定</b><span>按来源 IP 计数（IPv6 按 /64 聚合）；登录成功即清零，不是累计</span></div>
+              <div class="ctl" style="display:flex;align-items:center;gap:8px">
+                <input class="inp" type="number" id="lpMax" min="2" max="20" style="width:88px">
+                <span class="sub">次</span>
+              </div>
+            </div>
+            <div class="fieldrow">
+              <div class="t"><b>锁定时长</b><span>从触发锁定的那次失败起算，倒计时结束自动解除</span></div>
+              <div class="ctl" style="display:flex;align-items:center;gap:8px">
+                <input class="inp" type="number" id="lpMin" min="1" max="60" style="width:88px">
+                <span class="sub">分钟</span>
               </div>
             </div>
           </div>
@@ -1731,8 +1792,47 @@ const S = {
 };
 
 /* ---------------- 登录 / 首次初始化 ----------------
-   模式由服务端驱动：/api/session 里 setupDone=false → 创建管理员；
-   否则 → 登录。两种模式共用同一个分屏界面，字段按模式增减。 */
+   模式由服务端驱动：/api/session 里 setupDone=false → 设置密码；
+   否则 → 登录。单密码模式（参考 dockhelm）：没有用户名，两种模式都只问密码。 */
+
+/* 锁定倒计时：用「解除时刻」的相对时限而不是服务端绝对时间，
+   省得依赖两端时钟一致。刷新页面后若仍在锁定期，showAuth 会从
+   /api/setup-status 把 lockedFor 接回来，别让用户以为能试却一直失败。 */
+let auLockTimer = null, auLockDeadline = 0, auLockMsg = '';
+
+function auMmss(total) {
+  const m = Math.floor(total / 60), s = total % 60;
+  return m + ':' + String(s).padStart(2, '0');
+}
+function applyLock(msg, seconds) {
+  auLockMsg = msg;
+  showAuErr(seconds > 0 ? msg + '（剩余 ' + auMmss(seconds) + '）' : msg, 'err');
+  $('#auBtn').disabled = true;
+  $('#auBtnTxt').textContent = '已锁定';
+  if (auLockTimer) { clearInterval(auLockTimer); auLockTimer = null; }
+  if (seconds > 0) {
+    auLockDeadline = Date.now() + seconds * 1000;
+    auLockTimer = setInterval(() => {
+      const left = Math.ceil((auLockDeadline - Date.now()) / 1000);
+      if (left <= 0) { clearAuLock(); }
+      else $('#auErrTxt').textContent = auLockMsg + '（剩余 ' + auMmss(left) + '）';
+    }, 1000);
+  }
+}
+function clearAuLock() {
+  if (auLockTimer) { clearInterval(auLockTimer); auLockTimer = null; }
+  auLockDeadline = 0;
+  $('#auBtn').disabled = false;
+  $('#auBtnTxt').textContent = S.authMode === 'setup' ? '创建账户' : '登录';
+  hideAuErr();
+}
+/* 登录模式下问一次锁定状态：还在锁就接着倒计时，出了锁就当没事发生 */
+async function refreshLockState() {
+  try {
+    const d = await (await fetch('/api/setup-status')).json();
+    if (d && d.lockedFor > 0) applyLock('登录失败次数过多，请稍后再试', d.lockedFor);
+  } catch (e) { /* 拉不到就算了，别拦着登录 */ }
+}
 
 function showAuth(mode, broken) {
   S.authed = false;
@@ -1740,30 +1840,34 @@ function showAuth(mode, broken) {
   const setup = mode === 'setup';
   $('#auth').hidden = false;
   $('#auEyebrow').innerHTML = setup ? '<span class="dot"></span>首次启动' : '<span class="dot"></span>安全登录';
-  $('#auTtl').textContent = setup ? '创建管理员账户' : '登录控制台';
-  /* 凭据文件损坏时会重新打开创建入口 —— 必须说清楚为什么，
-     否则用户会以为"我的密码和账号凭空没了"。 */
-  $('#auSub').textContent = broken ? '凭据文件已损坏（旧文件已备份），请重新创建管理员'
-    : (setup ? '这台设备还没有管理员，先创建一个再继续'
-      : '用管理员账号继续，配置都保存在这台机器上');
+  $('#auTtl').textContent = setup ? '设置访问密码' : '登录控制台';
+  /* 凭据文件损坏时会重新打开设置入口 —— 必须说清楚为什么，
+     否则用户会以为"我的密码凭空没了"。 */
+  $('#auSub').textContent = broken ? '凭据文件已损坏（旧文件已备份），请重新设置密码'
+    : (setup ? '这台设备还没有密码，先设一个再继续'
+      : '输入访问密码继续，配置都保存在这台机器上');
   $('#auF2').hidden = !setup;
   $('#auRememberRow').hidden = setup;
-  $('#auBtnTxt').textContent = setup ? '创建账户' : '登录';
-  $('#auSwitch').hidden = !setup;      // 已初始化后服务端拒绝创建，不给假入口
+  $('#auBtnTxt').textContent = setup ? '设置并进入' : '登录';
+  $('#auForgotBox').hidden = setup;    // 设置密码页没有"忘记"可言
+  $('#auForgotTip').hidden = true;
   $('#auPass').placeholder = setup ? '至少 8 位，含字母、数字和特殊字符' : '请输入密码';
   $('#auPass').autocomplete = setup ? 'new-password' : 'current-password';
-  $('#auUser').placeholder = setup ? '给管理员起个名字' : '用户名';
   $('#auStr').hidden = !setup;
-  /* 每次进来都从干净状态开始（用户名不预填，注册/登录都让用户自己输） */
+  /* 每次进来都从干净状态开始（密码不预填） */
+  if (auLockTimer) { clearInterval(auLockTimer); auLockTimer = null; }
+  auLockDeadline = 0;
   hideAuErr();
-  $('#auUser').value = '';
   $('#auPass').value = ''; $('#auPass2').value = '';
   syncStrength();
-  setTimeout(() => { const p = setup ? $('#auUser') : $('#auPass'); if (p) p.focus(); }, 60);
+  setTimeout(() => { if ($('#auPass')) $('#auPass').focus(); }, 60);
+  if (!setup) refreshLockState();
 }
 function hideAuth() { $('#auth').hidden = true; }
-function showAuErr(msg) {
+function showAuErr(msg, tone) {
   $('#auErrTxt').textContent = msg;
+  /* 琥珀 = 还能重试；红 = 已锁定 / 设置失败。不给 tone 就按红处理。 */
+  $('#auErr').dataset.tone = tone === 'warn' ? 'warn' : 'err';
   $('#auErr').hidden = false;
 }
 function hideAuErr() { $('#auErr').hidden = true; }
@@ -1830,34 +1934,36 @@ function bindEye(btn, input) {
 }
 bindEye($('#auEye'), $('#auPass'));
 bindEye($('#auEye2'), $('#auPass2'));
-$('#auToLogin').addEventListener('click', () => showAuth('login'));
+$('#auForgot').addEventListener('click', () => {
+  $('#auForgotTip').hidden = !$('#auForgotTip').hidden;
+});
 
 try { localStorage.removeItem('ipv6sync-remember'); } catch (e) { }
 $('#auForm').addEventListener('submit', async e => {
   e.preventDefault();
+  if (auLockTimer) return;             // 锁定期别白费劲，按钮其实也是禁用的
   hideAuErr();
   const setup = S.authMode === 'setup';
   const btn = $('#auBtn'), txt = $('#auBtnTxt');
-  const user = $('#auUser').value, pass = $('#auPass').value;
+  const pass = $('#auPass').value;
   if (setup && pass !== $('#auPass2').value) {
     showAuErr('两次输入的密码不一致');
     return;
   }
   btn.disabled = true;
   txt.innerHTML = '<span class="spin" style="border-top-color:var(--accent-ink);border-color:color-mix(in srgb,var(--accent-ink) 30%,transparent)"></span>';
+  let locked = false;
   try {
     const r = await fetch(setup ? '/api/setup' : '/api/login', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(setup ? {
-        user,
         password: pass,
         password2: $('#auPass2').value,
       } : {
-        user,
-        password: pass,
         // 勾了「保持登录（7 天）」由后端签发 7 天有效期的 HttpOnly Cookie；
-        // 浏览器本地不保存任何密码明文（顺手清掉旧版本遗留的明文记录）
+        // 浏览器本地不保存任何密码明文
+        password: pass,
         remember: !!$('#auRemember').checked,
       }),
     });
@@ -1868,12 +1974,25 @@ $('#auForm').addEventListener('submit', async e => {
       S.authed = true;
       await boot();
       startPolling();          // 登录进来的也要开 5 秒轮询（原来只在启动已登录那条路开）
+    } else if (j.locked && j.retryAfter > 0) {
+      /* 服务端说锁定就锁定：剩余次数要用服务端的值，不能自己减
+         （多标签页各错一次就错乱了）。 */
+      locked = true;
+      applyLock(j.error || '登录失败次数过多，请稍后再试', j.retryAfter);
     } else {
-      showAuErr(j.error || (setup ? '创建失败' : '登录失败'));
+      // 401 带 remaining：琥珀色「还可尝试 N 次」；其余按红色错误处理
+      let msg = j.error || (setup ? '设置失败' : '登录失败');
+      if (!setup && typeof j.remaining === 'number' && j.remaining > 0)
+        msg += '，还可尝试 ' + j.remaining + ' 次';
+      showAuErr(msg, (!setup && typeof j.remaining === 'number') ? 'warn' : 'err');
     }
   } catch (e) {
     showAuErr('连不上服务，请稍后再试');
-  } finally { btn.disabled = false; txt.textContent = setup ? '创建账户' : '登录'; }
+  } finally {
+    /* 锁定态按钮必须保持禁用 + 文案保持「已锁定」；
+       其它情况恢复原样。 */
+    if (!locked) { btn.disabled = false; txt.textContent = setup ? '设置并进入' : '登录'; }
+  }
 });
 $('#btnLogout').addEventListener('click', async () => {
   const r = await api('/api/logout', {}).catch(() => null);
@@ -3944,8 +4063,6 @@ function renderSettings() {
   if (!st) return;
   const ov = st.overview || {};
   $('#routerSub').textContent = [ov.router_host, ov.router_user].filter(Boolean).join(' · ');
-  const acct = $('#acctUser');
-  if (acct) acct.textContent = st.user ? ('当前账号 ' + st.user) : '';
   const groups = st.settings || [];
   $('#routerFields').innerHTML = '';
   $('#behaviorFields').innerHTML = '';
@@ -4024,6 +4141,31 @@ $('#btnChangePw').addEventListener('click', async () => {
   if (!r || !r.ok) return errToast(r);
   $('#pwOld').value = ''; $('#pwNew').value = ''; $('#pwNew2').value = '';
   toast('密码已修改', '其他设备上的登录已失效，需要重新登录', 'check');
+});
+/* 登录保护：连错几次锁、锁多久。以前是后端常量，想调只能改代码重发镜像；
+   现在存 auth.json 的 lock 字段，保存后下一次失败记账立即按新值算。
+   后端会把越界值夹回合法区间，这里先拦一遍是为了当场告诉用户，而不是
+   让「保存成功」悄悄改成别的数字。 */
+$('#btnLockPolicy').addEventListener('click', async () => {
+  const mf = Math.round(Number($('#lpMax').value));
+  const mi = Math.round(Number($('#lpMin').value));
+  if (!(mf >= 2 && mf <= 20))
+    return toast('次数要在 2–20 之间', '连错 1 次就锁等于把控制台变成砖头', 'alert');
+  if (!(mi >= 1 && mi <= 60))
+    return toast('锁定时长要在 1–60 分钟之间', '', 'alert');
+  const btn = $('#btnLockPolicy');
+  btn.disabled = true;
+  const r = await api('/api/auth/lock-policy',
+    { max_failures: mf, minutes: mi }).catch(() => null);
+  btn.disabled = false;
+  if (!r || !r.ok) return errToast(r);
+  const hint = $('#acctHint');
+  $('#lpMax').value = r.lock.maxFailures;
+  $('#lpMin').value = r.lock.minutes;
+  if (hint) hint.textContent = '连错 ' + r.lock.maxFailures
+    + ' 次锁定 ' + r.lock.minutes + ' 分钟';
+  toast('登录保护已保存', '连错 ' + r.lock.maxFailures
+    + ' 次后锁定 ' + r.lock.minutes + ' 分钟', 'check');
 });
 $('#btnTest').addEventListener('click', async () => {
   const btn = $('#btnTest');
@@ -4234,6 +4376,17 @@ async function boot() {
     const ver = $('#auVer');               // 认证页页脚也带上版本号
     if (ver && S.version) ver.textContent = 'HiRouterCenter ' + S.version;
   }
+  /* 登录保护参数：设置页「控制台账号」卡的两格数字 + 卡头提示 */
+  try {
+    const s = await (await fetch('/api/session')).json();
+    if (s && s.lock) {
+      const mx = $('#lpMax'), mn = $('#lpMin'), hint = $('#acctHint');
+      if (mx) mx.value = s.lock.maxFailures;
+      if (mn) mn.value = s.lock.minutes;
+      if (hint) hint.textContent = '连错 ' + s.lock.maxFailures
+        + ' 次锁定 ' + s.lock.minutes + ' 分钟';
+    }
+  } catch (e) { /* 拉不到就留空，不拦启动 */ }
   await refreshState();
   await Promise.all([
     loadTasks(),

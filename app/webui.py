@@ -3,23 +3,26 @@
 Web 控制台
 
 一个很小的 HTTP 服务，只做两件事：
-  1. 用管理员账号把入口关起来（首次打开网页时创建，落在 auth.json，
-     scrypt 哈希；不使用任何环境变量设密码）
+  1. 用访问密码把入口关起来（首次打开网页时设置，落在 auth.json，
+     scrypt 哈希；不用环境变量设密码 —— 环境变量只用于「忘记密码」时的重置）
   2. 提供查看与修改设置的接口，改完热生效，不用重建容器
 
 安全上的取舍（都是有意的，不是漏的）：
-  · 控制台端口只要 PORT>0 就启动；还没创建管理员时只开放「创建管理员」两个
-    路由，创建成功后该入口永久关闭（403）。「重置」= 删 auth.json 重启容器。
-  · 口令存 scrypt 哈希（app/auth.py）。**用户名不对也照跑一次 scrypt**，
-    两条路径耗时同量级，不让人从响应快慢里猜出"用户名对不对"。
-  · **所有改状态的 POST 一律先过同源 + application/json 校验**，创建管理员、
+  · 单密码模式（参考 dockhelm）：这个控制台只有「管理员」一个角色，登录/创建
+    都只问密码。控制台端口只要 PORT>0 就启动；还没设置密码时只开放「设置密码」
+    路由，创建成功后该入口永久关闭（403）。「重置」见登录页「忘记密码」说明。
+  · 口令存 scrypt 哈希（app/auth.py）。单密码只有一条校验路径，恒定时间问题自然消失。
+  · **所有改状态的 POST 一律先过同源 + application/json 校验**，设置密码、
     登录、改密、登出一个不例外（2026-11-03 审查前这几个路由排在鉴权之前，
     未登录就能爆破改密、跨站能抢注管理员）。
-  · 登录防爆破，三层：单 IP（IPv6 按 /64 聚合成一个来源）5 分钟窗口内错 8 次即锁定
-    → 反复触发锁定时间逐次翻倍（5 分钟起步，上限 6 小时）；所有来源合计错 60 次
-    则进入"全局限速"（每次校验再多等 2 秒，**不整体拒登** —— 拒登会让攻击者
-    用几十个源地址把管理员一起关在门外）；每次登录校验前恒定延时 0.25 秒
-    （拉平响应时间、拖慢脚本）。锁定期间密码对也不放行，登录成功即清零。
+  · 登录防爆破（参数设置页可调，存 auth.json 的 lock 字段）：单来源
+    （IPv6 按 /64 聚合成一个来源）滑动窗口 5 分钟内连错 N 次（默认 5）即锁定
+    M 分钟（默认 5，从触发锁定的那次失败起算）；所有来源合计错 60 次则进入
+    "全局限速"（每次校验再多等 2 秒，**不整体拒登** —— 拒登会让攻击者用几十个
+    源地址把管理员一起关在门外）；每次登录校验前恒定延时 0.25 秒（拉平响应时间、
+    拖慢脚本）。锁定期间密码对也不放行，登录成功即清零。
+    失败响应带 remaining（还可尝试几次）、锁定响应带 retryAfter（几秒后解锁），
+    前端据此显示「还可尝试 N 次」与锁定倒计时。
   · 会话令牌只放内存（重启即失效），Cookie 带 HttpOnly + SameSite=Lax；
     勾选「保持登录(7天)」时令牌与 Cookie 均按 7 天有效期签发。改密码后其他会话作废。
   · 改状态的请求要求 Content-Type 为 application/json 且 Origin（若有）与 Host 一致
@@ -45,17 +48,14 @@ import time
 import urllib.parse
 
 from . import settings as st
-from .auth import WrongPassword as _WrongPassword
+from .auth import (WrongPassword as _WrongPassword,
+                   FAIL_WINDOW as _FAIL_WINDOW, CONSOLE_USER)
 from .node import Busy
 from .webpage import PAGE
 
 log = logging.getLogger("ipv6sync.webui")
 
-# 登录防爆破：窗口内允许的失败次数
-FAIL_WINDOW = 300.0
-FAIL_LIMIT = 8
 GLOBAL_FAIL_LIMIT = 60   # 同窗口内全部来源的失败总上限（防换 IP 分摊的分布式猜解）
-LOCK_MAX = 6 * 3600      # 单个来源递进锁定的时长上限（5min → 10min → …）
 SLOW_DELAY = 2.0         # 全局压力下的额外延时（不整体拒登，避免误伤管理员）
 LOGIN_DELAY = 0.25       # 每次校验前的恒定延时
 MAX_BODY = 1 << 20       # 请求体上限（1MB）
@@ -88,9 +88,10 @@ def _ctype(handler) -> str:
 class WebUI:
     """控制台 HTTP 服务。
 
-    登录凭据不再来自环境变量：管理员账号在**首次打开网页时创建**，落在
+    登录凭据不再来自环境变量：访问密码在**首次打开网页时设置**，落在
     `auth_file`（auth.json，scrypt 哈希）。文件不存在 = 还没初始化，
-    只开放「创建管理员」两个路由；创建成功后永久关闭。
+    只开放「设置密码」路由；设置成功后永久关闭。忘记密码用
+    HIROUTERCENTER_PASSWORD 环境变量重置（见 webui_from_env）。
     """
 
     def __init__(self, node, host: str, port: int, auth_file: str,
@@ -100,6 +101,9 @@ class WebUI:
         self.host = host
         self.port = port
         self.auth = AuthStore(auth_file)
+        pol = self.auth.policy()          # 登录保护：连错几次锁、锁多久
+        self._max_failures = pol["max_failures"]
+        self._lock_minutes = pol["minutes"]
         self.session_ttl = max(300, int(session_ttl))
         self.REMEMBER_TTL = max(self.session_ttl, 7 * 24 * 3600)  # 保持登录：7 天
         # 允许的 Host（小写，可含端口）。空 = 不限制（默认，兼容"用 IP 直连"
@@ -112,7 +116,6 @@ class WebUI:
         self._fails: dict[str, list[float]] = {}          # 来源键 -> [失败时刻]
         self._global_fails: list[float] = []              # 所有来源的失败时刻（全局压力用）
         self._locked_until: dict[str, float] = {}         # 来源键 -> 锁定截止时刻
-        self._strikes: dict[str, int] = {}                # 来源键 -> 被锁次数（决定下次锁多久）
         self._lock = threading.Lock()
         self._server: http.server.ThreadingHTTPServer | None = None
 
@@ -130,8 +133,8 @@ class WebUI:
         """
         return self.auth.exists() and not self.auth.broken()
 
-    def _check_credentials(self, user: str, password: str) -> bool:
-        return self.auth.verify(user, password)
+    def _check_credentials(self, password: str) -> bool:
+        return self.auth.verify(password)
 
     def _new_token(self, user: str, ttl: int | None = None) -> str:
         tok = secrets.token_urlsafe(32)
@@ -160,18 +163,13 @@ class WebUI:
             with self._lock:
                 self._tokens.pop(tok, None)
 
-    def _throttled(self, ip: str) -> float:
-        """返回还需等待的秒数（0 = 可以尝试登录）。
+    def _throttled(self, ip: str) -> tuple[float, bool]:
+        """登录前的闸门。返回 (还需等待的秒数, 是否处于锁定)。
 
-        三层防线：
-        · 单来源窗口：FAIL_WINDOW 秒内失败 FAIL_LIMIT 次 → 锁定该来源。
-          **IPv6 按 /64 聚合**（见 _rate_key）—— 否则换源地址就等于换人；
-        · 递进锁定：被锁的次数越多锁得越久（5 分钟 → 10 分钟 → …，上限 LOCK_MAX），
-          让在线爆破在时间上不划算；
-        · 全局压力：所有来源加起来的失败总数达到 GLOBAL_FAIL_LIMIT 时**不拒登**，
-          只是每次校验再多等 SLOW_DELAY 秒。早期版本这里整体拒登一个窗口，
-          结果是攻击者用几十个源地址故意失败就能把管理员一起关在门外。
-        锁定期间**密码对了也不放行**；登录成功即全部清零。
+        · 锁定中：密码对了也不放行，等待秒数给前端做倒计时（retryAfter）；
+        · 刚出狱：窗口清零重新计数；
+        · 全局压力（所有来源合计失败太多）不在这里拦 —— 它只降速不拒登，
+          见 _global_pressure / _login 里的 SLOW_DELAY。
         """
         now = time.time()
         key = _rate_key(ip)
@@ -179,50 +177,79 @@ class WebUI:
             self._gc(now)
             until = self._locked_until.get(key, 0.0)
             if until > now:
-                return until - now
+                return until - now, True
             if until:
-                # 刚出狱：窗口清零重新计数（strikes 保留，下次锁更久）
                 self._locked_until.pop(key, None)
                 self._fails.pop(key, None)
+        return 0.0, False
 
-            hist = [t for t in self._fails.get(key, []) if now - t < FAIL_WINDOW]
+    def _note_fail(self, ip: str) -> tuple[bool, int, float]:
+        """记一次登录失败。
+
+        返回 (是否触发锁定, 还可尝试几次, 锁定秒数)。触发锁定时顺带把
+        _locked_until 立起来 —— 触发锁定的**这一次**直接按「已锁定」回：
+        否则前端只会看到「还可尝试 0 次」，下一发请求才被告知锁定，
+        语气和时序都对不上（对齐 dockhelm 的行为）。
+        """
+        now = time.time()
+        key = _rate_key(ip)
+        with self._lock:
+            self._fails.setdefault(key, []).append(now)
+            self._global_fails.append(now)
+            hist = [t for t in self._fails[key] if now - t < _FAIL_WINDOW]
             self._fails[key] = hist
-            if len(hist) >= FAIL_LIMIT:
-                strikes = self._strikes.get(key, 0) + 1
-                self._strikes[key] = strikes
-                lock = min(FAIL_WINDOW * (2 ** (strikes - 1)), LOCK_MAX)
+            n = len(hist)
+            if n >= self._max_failures:
+                lock = self._lock_minutes * 60
                 self._locked_until[key] = now + lock
-                log.warning("登录防爆破：%s 在 %.0f 秒内失败 %d 次，"
-                            "锁定 %.0f 秒（第 %d 次触发）",
-                            ip, FAIL_WINDOW, len(hist), lock, strikes)
-                return lock
-        return 0.0
+                log.warning("登录防爆破：%s 在 %.0f 秒内连续失败 %d 次，"
+                            "锁定 %d 分钟", ip, _FAIL_WINDOW, n,
+                            self._lock_minutes)
+                return True, 0, lock
+            return False, self._max_failures - n, 0.0
+
+    def _remaining(self, ip: str) -> int:
+        """当前窗口内该来源还能尝试几次（给 setup-status 用，不新增失败）。"""
+        now = time.time()
+        key = _rate_key(ip)
+        with self._lock:
+            hist = [t for t in self._fails.get(key, []) if now - t < _FAIL_WINDOW]
+            return max(self._max_failures - len(hist), 0)
+
+    def _locked_for(self, ip: str) -> float:
+        """该来源还需等多少秒才解锁；未锁定返回 0（给 setup-status 用）。"""
+        until = self._locked_until.get(_rate_key(ip), 0.0)
+        return max(until - time.time(), 0.0)
+
+    def _set_lock_policy(self, failures, minutes) -> dict:
+        """更新锁定策略（设置页保存后调用，下一次失败记账立即按新值算）。"""
+        pol = self.auth.set_policy(failures, minutes)
+        self._max_failures = pol["max_failures"]
+        self._lock_minutes = pol["minutes"]
+        log.info("登录保护已更新：连错 %d 次锁定 %d 分钟",
+                 pol["max_failures"], pol["minutes"])
+        return {"maxFailures": self._max_failures, "minutes": self._lock_minutes}
 
     def _global_pressure(self) -> bool:
         """全局失败量是否已到需要额外降速的程度（不拒登，只拖慢）。"""
         now = time.time()
         with self._lock:
             self._global_fails = [t for t in self._global_fails
-                                  if now - t < FAIL_WINDOW]
+                                  if now - t < _FAIL_WINDOW]
             return len(self._global_fails) >= GLOBAL_FAIL_LIMIT
 
     def _gc(self, now: float) -> None:
         """清理过期记账（调用方必须已持 self._lock）。
 
-        _fails / _strikes 早期只增不减 —— 换源地址的人能把它们撑成内存泄漏。
+        _fails 早期只增不减 —— 换源地址的人能把它们撑成内存泄漏。
         """
         for key in [k for k, v in self._fails.items()
-                    if not v or now - v[-1] > FAIL_WINDOW * 2]:
+                    if not v or now - v[-1] > _FAIL_WINDOW * 2]:
             self._fails.pop(key, None)
         for key in [k for k, t in self._locked_until.items() if t <= now]:
-            # 锁到期（出狱）：窗口一并清零，strikes 留着决定下次锁多久
+            # 锁到期（出狱）：窗口一并清零
             self._locked_until.pop(key, None)
             self._fails.pop(key, None)
-        # strikes 记的是"这个人以前被锁过几次"，保留一段就够，别永久攒
-        if len(self._strikes) > 4096:
-            for key in list(self._strikes)[:2048]:
-                if key not in self._locked_until:
-                    self._strikes.pop(key, None)
         if len(self._tokens) > 32:
             self._sweep_tokens(now)
 
@@ -232,18 +259,11 @@ class WebUI:
         for tok in [t for t, (_, exp) in self._tokens.items() if exp <= now]:
             self._tokens.pop(tok, None)
 
-    def _note_fail(self, ip: str):
-        now = time.time()
-        with self._lock:
-            self._fails.setdefault(_rate_key(ip), []).append(now)
-            self._global_fails.append(now)
-
     def _clear_fails(self, ip: str):
         key = _rate_key(ip)
         with self._lock:
             self._fails.pop(key, None)
             self._locked_until.pop(key, None)
-            self._strikes.pop(key, None)
 
     # ---------------- 路由 ----------------
 
@@ -285,12 +305,16 @@ class WebUI:
             return handler.send_json({"name": "HiRouterCenter",
                                       "version": _version()})
 
-        # ---- 初始化：只在「还没有管理员」时开放，创建成功后永久关闭 ----
+        # ---- 初始化：只在「还没有密码」时开放，设置成功后永久关闭 ----
         if method == "GET" and route == "/api/setup-status":
-            # 不回显用户名：未认证就能拿到管理员名，等于把用户名爆破的一半白送
+            # 不回显任何凭据。failures / lockedFor 是给登录页的：
+            # 刷新后「还可尝试 N 次」和锁定倒计时都能接上（对齐 dockhelm）。
             return handler.send_json({"setupDone": self.setup_done(),
                                       "broken": self.auth.broken(),
-                                      "version": _version()})
+                                      "version": _version(),
+                                      "maxFailures": self._max_failures,
+                                      "failures": self._remaining(ip),
+                                      "lockedFor": round(self._locked_for(ip))})
 
         # ---- 登录前的三个动作：先过来源与类型校验，再谈业务 ----
         # 顺序很关键：这几条排在鉴权之前（本来也没法鉴权），所以必须自己
@@ -314,10 +338,13 @@ class WebUI:
             # version 一并返回：登录页页脚要显示「HiRouterCenter x.y.z」，
             # 而 boot()（里面才拉 /api/version）要等登录后才跑。
             # broken = 凭据文件损坏、入口已重新打开，前端要如实告诉用户。
+            # lock = 当前登录保护策略，设置页「控制台账号」卡要显示。
             return handler.send_json({"authed": bool(user), "user": user or "",
                                       "setupDone": self.setup_done(),
                                       "broken": self.auth.broken(),
-                                      "version": _version()})
+                                      "version": _version(),
+                                      "lock": {"maxFailures": self._max_failures,
+                                               "minutes": self._lock_minutes}})
 
         if not user:
             # 未登录：状态类接口温和地回 authed=false，动作类接口直接 401
@@ -341,17 +368,29 @@ class WebUI:
         # 位置很关键 —— 早期版本这条排在 `if not user` 之前，且内部只看 old，
         # 于是未登录就能无限次猜旧密码，猜中即改密接管（2026-11-03 审查 H-1）。
         if method == "POST" and route == "/api/password":
-            wait = self._throttled(ip)
-            if wait > 0:
+            wait, locked = self._throttled(ip)
+            if locked:
                 return handler.send_json(
-                    {"ok": False,
-                     "error": f"尝试过于频繁，请 {int(wait) + 1} 秒后再试"}, 429)
+                    {"ok": False, "locked": True, "retryAfter": round(wait),
+                     "error": f"尝试过于频繁，请约 {int(wait) // 60 + 1} 分钟后再试"}, 429)
             res = self._change_password(handler, body, user, token)
             if res is False:          # 旧密码不对：计入同一个失败账本
-                self._note_fail(ip)
+                locked2, remaining, _ = self._note_fail(ip)
                 return handler.send_json(
-                    {"ok": False, "error": "当前密码不正确"}, 400)
+                    {"ok": False, "error": "当前密码不正确"
+                     + (f"，还可尝试 {remaining} 次" if not locked2 else "")},
+                    400)
             return
+
+        # 登录保护策略：连错几次锁、锁多久（存 auth.json 的 lock 字段）
+        if method == "POST" and route == "/api/auth/lock-policy":
+            try:
+                data = _json_body(body)
+            except ValueError as e:
+                return handler.send_json({"ok": False, "error": str(e)}, 400)
+            pol = self._set_lock_policy(data.get("max_failures"),
+                                        data.get("minutes"))
+            return handler.send_json({"ok": True, "lock": pol})
 
         try:
             if method == "POST" and route == "/api/settings":
@@ -478,12 +517,12 @@ class WebUI:
         return handler.send_json({"ok": False, "error": "not found"}, 404)
 
     def _login(self, handler: "Handler", body: bytes, ip: str):
-        wait = self._throttled(ip)
-        if wait > 0:
+        wait, locked = self._throttled(ip)
+        if locked:
             return handler.send_json(
-                {"ok": False,
-                 "error": f"登录失败次数过多，请 {int(wait) + 1} 秒后再试"
-                          f"（反复触发会逐次延长锁定）"}, 429)
+                {"ok": False, "locked": True,
+                 "error": f"登录失败次数过多，请约 {int(wait) // 60 + 1} 分钟后再试",
+                 "retryAfter": round(wait)}, 429)
         try:
             data = _json_body(body)
         except ValueError as e:
@@ -496,32 +535,41 @@ class WebUI:
             delay += SLOW_DELAY
         time.sleep(delay)
 
-        user = self.auth.username()
-        if self._check_credentials(str(data.get("user", "")),
-                                   str(data.get("password", ""))):
+        # 单密码模式：请求里就算带了历史遗留的 user 字段也直接忽略
+        if self._check_credentials(str(data.get("password", ""))):
             self._clear_fails(ip)
             ttl = self.REMEMBER_TTL if data.get("remember") else self.session_ttl
-            tok = self._new_token(user, ttl)
+            tok = self._new_token(self.auth.username(), ttl)
             log.info("控制台登录成功，来源 %s（会话 %s）",
                      ip, "7天" if data.get("remember") else f"{self.session_ttl // 3600}小时")
             return handler.send_json(
-                {"ok": True, "user": user},
+                {"ok": True, "user": self.auth.username()},
                 extra_headers=[("Set-Cookie",
                                 self._cookie(tok, ttl, handler.forwarded_https()))])
 
-        self._note_fail(ip)
-        log.warning("控制台登录失败，来源 %s", ip)
-        return handler.send_json({"ok": False, "error": "用户名或密码不对"}, 401)
+        locked2, remaining, lock_secs = self._note_fail(ip)
+        if locked2:
+            # 触发锁定的这一次就按「已锁定」回：别让前端先看到「还可尝试 0 次」，
+            # 下一发请求才被告知 429 —— 时序和语气都对不上。
+            return handler.send_json(
+                {"ok": False, "locked": True,
+                 "error": f"连续 {self._max_failures} 次密码错误，已锁定"
+                          f" {self._lock_minutes} 分钟",
+                 "retryAfter": round(lock_secs)}, 429)
+        log.warning("控制台登录失败，来源 %s（还剩 %d 次机会）", ip, remaining)
+        return handler.send_json(
+            {"ok": False, "error": "密码错误", "remaining": remaining}, 401)
 
     def _setup(self, handler, body: bytes, ip: str):
-        """首次创建管理员。只允许一次：auth.json 存在后这里永远 403。
+        """首次设置访问密码（单密码，不再有用户名）。只允许一次：
+        auth.json 存在后这里永远 403。
 
         凭据文件损坏时（半截 JSON / 空文件）允许重建 —— 否则控制台会永久
         锁死：入口关着、登录又永远失败，用户只看到"密码不对"。
         """
         if self.setup_done():
             return handler.send_json(
-                {"ok": False, "error": "管理员已创建，请直接登录"}, 403)
+                {"ok": False, "error": "密码已设置，请直接登录"}, 403)
         try:
             data = _json_body(body)
         except ValueError as e:
@@ -529,18 +577,17 @@ class WebUI:
         if str(data.get("password", "")) != str(data.get("password2", "")):
             return handler.send_json({"ok": False, "error": "两次输入的密码不一致"}, 400)
         try:
-            rec = self.auth.create(str(data.get("user", "")),
-                                   str(data.get("password", "")))
-        except ValueError as e:            # AuthError：用户名 / 密码强度问题
+            self.auth.create(str(data.get("password", "")))
+        except ValueError as e:            # AuthError：密码强度问题
             return handler.send_json({"ok": False, "error": str(e)}, 400)
         except OSError as e:
             log.error("写入 auth.json 失败：%s", e)
             return handler.send_json(
                 {"ok": False, "error": "凭据写入失败，请检查 data 目录权限"}, 500)
-        log.info("管理员 %s 已创建（来源 %s）—— 初始化入口从此关闭", rec["username"], ip)
-        tok = self._new_token(rec["username"], self.session_ttl)
+        log.info("访问密码已设置（来源 %s）—— 初始化入口从此关闭", ip)
+        tok = self._new_token(CONSOLE_USER, self.session_ttl)
         return handler.send_json(
-            {"ok": True, "user": rec["username"]},
+            {"ok": True, "user": CONSOLE_USER},
             extra_headers=[("Set-Cookie",
                             self._cookie(tok, self.session_ttl,
                                          handler.forwarded_https()))])
@@ -581,10 +628,11 @@ class WebUI:
             log.info("Web 控制台已关闭（PORT=0）")
             return None
         if not self.setup_done():
-            log.info("首次启动：还没有管理员。浏览器打开控制台即可创建"
-                     "（创建入口只在这一刻开放，之后永久关闭）")
+            log.info("首次启动：还没设置访问密码。浏览器打开控制台即可设置"
+                     "（入口只在这一刻开放，之后永久关闭）")
         else:
-            log.info("Web 控制台已就绪（管理员 %s）", self.auth.username())
+            log.info("Web 控制台已就绪（登录保护：连错 %d 次锁定 %d 分钟）",
+                     self._max_failures, self._lock_minutes)
 
         ui = self
 
@@ -771,8 +819,10 @@ def _version() -> str:
 def webui_from_env(node, **overrides) -> WebUI:
     """按环境变量装配控制台。
 
-    登录凭据**不走环境变量**（历史上曾用 ADMIN_USERNAME / ADMIN_PASSWORD，
-    已废弃）：管理员在首次打开网页时创建，落在 auth.json。
+    登录密码**平时不走环境变量**：在首次打开网页时设置，落在 auth.json。
+    唯一的例外是 HIROUTERCENTER_PASSWORD —— 「忘记密码」的兜底之一：
+    设上它重启容器，密码被无条件覆盖成这个值（用完记得删掉再重启，
+    否则每次启动都会重置；设置页改密码也拦不住它）。
     文件位置可用 AUTH_FILE 覆盖，默认与 SETTINGS_FILE 同目录（都在卷里）。
     """
     def env(name, default=""):
@@ -795,4 +845,19 @@ def webui_from_env(node, **overrides) -> WebUI:
     # WEB_ALLOWED_HOSTS：逗号分隔的 Host 白名单（含端口，如 192.168.3.10:6600）。
     # 不配 = 不限（默认，兼容用 IP / 域名 / 反代访问的常规用法）。
     allowed = tuple(h.strip() for h in env("WEB_ALLOWED_HOSTS").split(",") if h.strip())
-    return WebUI(node, host, port, auth_file, ttl, allowed_hosts=allowed)
+    ui = WebUI(node, host, port, auth_file, ttl, allowed_hosts=allowed)
+
+    # 忘记密码兜底：环境变量重置。放这里是因为 AUTH_FILE 可被覆盖，
+    # 重置必须打在控制台真正用的那份凭据文件上。
+    force = os.environ.get("HIROUTERCENTER_PASSWORD", "")
+    if force:
+        try:
+            ui.auth.set_password(force)
+            log.info("已按 HIROUTERCENTER_PASSWORD 重置控制台密码"
+                     "（建议现在就删掉这个环境变量再重启，"
+                     "否则每次启动都会把密码改回去）")
+        except ValueError as e:
+            log.warning("HIROUTERCENTER_PASSWORD 不满足密码要求，未重置：%s", e)
+        except OSError as e:
+            log.error("按 HIROUTERCENTER_PASSWORD 重置密码失败：%s", e)
+    return ui
