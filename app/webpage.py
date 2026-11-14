@@ -3358,9 +3358,9 @@ function renderTasks() {
       + '<td class="mono" style="font-size:11.5px;color:var(--text-3)">' + escHtml(x.next_at || '—') + '</td>'
       + '<td>' + res + '</td>'
       + '<td><button class="sw" data-on="' + (x.enabled ? 'true' : 'false') + '"></button></td>'
-      + '<td><div class="acts"><button class="btn btn-sm" data-a="run">立即执行</button>'
-      + '<button class="btn btn-sm" data-a="edit">' + svgI('edit') + '</button>'
-      + '<button class="btn btn-sm btn-danger" data-a="del">' + svgI('trash') + '</button></div></td>';
+      + '<td><div class="acts"><button class="btn btn-sm" data-a="run">' + svgI('zap') + '立即执行</button>'
+      + '<button class="btn btn-sm" data-a="edit">' + svgI('edit') + '编辑</button>'
+      + '<button class="btn btn-sm btn-danger" data-a="del">' + svgI('trash') + '删除</button></div></td>';
     tr.querySelector('.sw').addEventListener('click', async () => {
       const want = tr.querySelector('.sw').dataset.on !== 'true';
       const r = await api('/api/tasks/toggle', { id: x.id, enabled: want }).catch(() => null);
